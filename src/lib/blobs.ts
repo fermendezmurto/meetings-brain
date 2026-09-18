@@ -1,6 +1,7 @@
 import { promises as fs, createReadStream, createWriteStream } from 'node:fs'
 import { pipeline } from 'node:stream/promises'
 import path from 'node:path'
+import { dirDatos } from './datos'
 
 /**
  * Los trozos de audio se guardan de a uno, numerados. Se arman recien al cerrar.
@@ -13,10 +14,8 @@ import path from 'node:path'
  * trozo. Concatenar en orden da un archivo que los transcriptores leen bien,
  * pero sin duracion en los metadatos, asi que la duracion la lleva el cliente.
  */
-const raiz = path.join(process.cwd(), '.data', 'audio')
-
 function dir(id: string) {
-  return path.join(raiz, id)
+  return dirDatos('audio', id)
 }
 
 export function nombreTrozo(indice: number) {

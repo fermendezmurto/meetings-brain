@@ -1,5 +1,6 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { dirDatos } from './datos'
 import type { Grabacion } from './types'
 
 /**
@@ -7,8 +8,7 @@ import type { Grabacion } from './types'
  * y para las pruebas; cuando haga falta concurrencia real esto pasa a Postgres
  * sin tocar a quien lo llama.
  */
-const raiz = path.join(process.cwd(), '.data')
-const fichas = path.join(raiz, 'grabaciones')
+const fichas = dirDatos('grabaciones')
 
 async function asegurarDir(dir: string) {
   await fs.mkdir(dir, { recursive: true })

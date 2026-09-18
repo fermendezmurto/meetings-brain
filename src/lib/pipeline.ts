@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { armarAudio } from './blobs'
 import { config } from './config'
+import { dirDatos } from './datos'
 import { asegurarRuta, subirArchivo, subirContenido } from './drive'
 import { tokenVigente } from './google'
 import { aHtml, aMarkdown, nombreCarpeta } from './minuta'
@@ -72,14 +73,7 @@ async function publicar(
 
   if (config.destino === 'mock') {
     // Modo de prueba: mismo arbol de carpetas, pero en disco.
-    const dir = path.join(
-      process.cwd(),
-      '.data',
-      'salida',
-      g.creadaEn.slice(0, 4),
-      g.creadaEn.slice(5, 7),
-      carpeta,
-    )
+    const dir = dirDatos('salida', g.creadaEn.slice(0, 4), g.creadaEn.slice(5, 7), carpeta)
     await fs.mkdir(dir, { recursive: true })
     await fs.copyFile(rutaAudio, path.join(dir, 'audio.webm'))
     await fs.writeFile(path.join(dir, 'transcripcion.txt'), texto, 'utf8')

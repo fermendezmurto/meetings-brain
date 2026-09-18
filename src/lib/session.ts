@@ -5,6 +5,7 @@ import { SignJWT, jwtVerify } from 'jose'
 import { cookies } from 'next/headers'
 import { config } from './config'
 import { COOKIE } from './cookie'
+import { dirDatos } from './datos'
 
 export { COOKIE }
 
@@ -21,7 +22,7 @@ interface Tokens {
   venceEn: number
 }
 
-const dirSesiones = path.join(process.cwd(), '.data', 'sesiones')
+const dirSesiones = dirDatos('sesiones')
 
 function clave() {
   return new TextEncoder().encode(config.sessionSecret)
