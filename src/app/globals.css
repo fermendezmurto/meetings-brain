@@ -1,0 +1,107 @@
+:root {
+  --fondo: #0d1117;
+  --panel: #161b22;
+  --borde: #262d38;
+  --texto: #e6edf3;
+  --suave: #8b949e;
+  --acento: #2f81f7;
+  --rojo: #f05252;
+  --verde: #3fb950;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --fondo: #f6f8fa;
+    --panel: #ffffff;
+    --borde: #d8dee4;
+    --texto: #1f2328;
+    --suave: #636c76;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--fondo);
+  color: var(--texto);
+  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+main {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+}
+
+h1 { font-size: 22px; margin: 0 0 4px; }
+h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .05em; color: var(--suave); margin: 28px 0 10px; }
+p { margin: 0 0 12px; }
+a { color: var(--acento); }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 12px;
+}
+
+.boton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 14px 18px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--acento);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+}
+.boton:disabled { opacity: .5; cursor: not-allowed; }
+.boton.secundario { background: transparent; border: 1px solid var(--borde); color: var(--texto); }
+.boton.peligro { background: var(--rojo); }
+
+input, textarea {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--borde);
+  border-radius: 8px;
+  background: var(--fondo);
+  color: var(--texto);
+  font: inherit;
+  /* 16px o menos hace que iOS haga zoom solo al enfocar. */
+  font-size: 16px;
+}
+
+.reloj {
+  font-variant-numeric: tabular-nums;
+  font-size: 48px;
+  font-weight: 700;
+  text-align: center;
+  margin: 24px 0 8px;
+}
+
+.punto {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--rojo);
+  margin-right: 8px;
+  animation: latir 1.4s ease-in-out infinite;
+}
+@keyframes latir { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .punto { animation: none; } }
+
+.suave { color: var(--suave); font-size: 14px; }
+.fila { display: flex; gap: 8px; align-items: center; }
+.lista { list-style: none; padding: 0; margin: 0; }
+.lista li { padding: 10px 0; border-bottom: 1px solid var(--borde); }
+.lista li:last-child { border-bottom: 0; }
+.aviso { border-left: 3px solid var(--rojo); padding-left: 12px; }
