@@ -171,20 +171,67 @@ tareas:** así la conoce.
 
 - **Nota de voz:** grabala desde Chat o mandá un audio corto. Se contesta en el
   momento.
-- **Reunión:** grabala con la grabadora del teléfono y mandá el archivo al
-  Asistente. Si escribís algo con el audio (*"reunión de producto con Diana y
-  Christian"*), ayuda a saber quién dijo qué.
+- **Reunión:** grabala con la **app Asistente** del celular (Parte 4), que
+  graba con la pantalla bloqueada y la manda sola. También sirve mandarle al
+  Asistente el archivo de la grabadora del teléfono. Si escribís con quién era
+  (*"reunión de producto con Diana y Christian"*), ayuda a saber quién dijo qué.
   - En 5 a 10 minutos te llega **la minuta por correo**, y cada responsable
     recibe sus tareas.
   - La **transcripción literal** se agrega al mismo documento en la media hora
     siguiente.
   - Todo queda en Drive: **Asistente → Reuniones → año-mes**.
-- **Límite:** hasta 48 MB por audio, entre 50 minutos y hora y media según la
-  calidad de grabación del teléfono. Si es más largo, partilo en dos.
+- **Límite:** con la app, 500 MB (unas diez horas). Un audio mandado por Chat,
+  hasta 48 MB: entre 50 minutos y hora y media según el teléfono.
 
 > En el piloto, el Asistente no puede escribirte en Chat *después* de contestar:
 > eso requiere un permiso del administrador. Por eso las minutas llegan por
 > correo.
+
+---
+
+## Parte 4 — La app del celular (15 minutos)
+
+La app graba con la pantalla apagada y manda la grabación sola al terminar.
+Cada persona la vincula a su cuenta con un código que le da el Asistente en
+Chat, así que la app no pide usuario ni contraseña.
+
+### 4a. Publicar la entrada para la app (una sola vez, lo hace quien instaló)
+
+1. En Apps Script, arriba a la derecha: **Implementar → Nueva implementación**.
+2. Al lado de *Seleccionar tipo*, tocá el engranaje ⚙ y elegí **Aplicación web**.
+3. Descripción: `App del celular`.
+4. **Ejecutar como:** *Yo*. **Quién tiene acceso:** *Cualquier usuario*.
+   - Si *Cualquier usuario* no aparece, el administrador de Workspace lo tiene
+     bloqueado: hay que pedirle que lo permita para Apps Script.
+5. **Implementar**. Si pide autorizar, aceptá.
+6. Copiá la **URL de la aplicación web** (termina en `/exec`). Esa dirección
+   va adentro de la app: pasásela a quien compila la app.
+
+> Esto no reemplaza lo de la Parte 2: Chat sigue usando la implementación
+> *HEAD*. Son dos puertas al mismo Asistente.
+
+### 4b. Instalar la app
+
+- **Android:** en GitHub, entrá al repositorio → **Releases** → la más nueva →
+  **Asistente.apk**. Abrilo desde el celular. Android pregunta si permitís
+  instalar apps de esa fuente: sí. Las versiones nuevas se instalan encima,
+  sin perder nada.
+- **iPhone:** Apple no deja instalar apps fuera de su tienda sin una cuenta de
+  desarrollador (USD 99 por año). Con esa cuenta, la app se reparte por
+  TestFlight a quien se invite. El código es el mismo.
+
+### 4c. Vincular y grabar
+
+1. En Chat, escribile **vincular** al Asistente. Contesta con un código de seis
+   números.
+2. Abrí la app y escribí el código. Queda vinculada a tu cuenta.
+3. Tocá **Grabar**. Podés bloquear el teléfono: en Android queda un aviso fijo
+   mientras graba.
+4. Al terminar, la app la envía sola y muestra *Enviando…*, después *Enviada*,
+   y cuando está la minuta, **Abrir**.
+
+Si se corta la señal, la app reintenta sola y sigue desde donde quedó. Si una
+llamada interrumpe la grabación, al volver tocás **Continuar**.
 
 ---
 
@@ -273,6 +320,11 @@ Copiá de nuevo [`dist/Asistente.gs`](dist/Asistente.gs), pegalo encima de
 `Código.gs` y guardá. Si cambió `appsscript.json`, pegalo también. Después
 corré **instalar** otra vez: no duplica nada y deja todo al día.
 
+Chat toma el código nuevo en el momento. **La app del celular no**: usa una
+versión fija. Para pasarle el código nuevo: **Implementar → Administrar
+implementaciones →** la de *App del celular* **→** lápiz ✏️ **→ Versión: Nueva
+versión → Implementar**. La dirección no cambia.
+
 ## Abrirlo a toda la empresa
 
 1. El **administrador de Workspace** permite la app de Chat para el dominio.
@@ -301,9 +353,14 @@ corré **instalar** otra vez: no duplica nada y deja todo al día.
   solo pedido corto; la transcripción literal se pide en tramos de 10 minutos.
   Cada paso queda guardado en la hoja Reuniones, así que un corte no obliga a
   empezar de cero.
-- **Pruebas.** `npm test` corre, además de la lógica, 26 escenarios de punta a
+- **La app del celular** está en `movil/` (Expo, Android y iPhone). Habla con
+  `Web.js`: el teléfono se vincula con un código de Chat y la grabación sube de
+  a 4 MB a una subida reanudable de Drive. De Drive a Gemini el audio también
+  pasa de a pedazos, así que no hay tope de 50 MB.
+- **Pruebas.** `npm test` corre, además de la lógica, escenarios de punta a
   punta contra una imitación de los servicios de Google: instalar, anotar,
-  cerrar, notas de voz, reuniones, fallas y reintentos. La imitación no
+  cerrar, notas de voz, reuniones, la app mandando grabaciones con cortes de
+  señal, fallas y reintentos. La imitación no
   reemplaza probarlo en Google: ver *Qué falta confirmar*.
 
 ### Qué falta confirmar en Google real
@@ -312,6 +369,11 @@ corré **instalar** otra vez: no duplica nada y deja todo al día.
   rechaza, el Asistente pide el enlace de Drive, que funciona siempre.
 - **El formato de las notas de voz de Chat** y de la grabadora de cada teléfono.
   Si Gemini no acepta alguno, el error lo dice y se agrega la conversión.
+- **La subida reanudable de Drive desde Apps Script** (respuestas 308 y el
+  encabezado Range), y que la aplicación web acepte pedidos sin sesión de
+  Google.
+- **Grabar con la pantalla apagada** en cada marca de teléfono: algunos Android
+  cierran apps en segundo plano para ahorrar batería.
 - **Cuánto tarda Gemini con una reunión de una hora.** Si la minuta de una
   reunión larga pasa el minuto de Apps Script, se reintenta y avisa; habría que
   bajar el límite de duración.

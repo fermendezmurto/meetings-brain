@@ -13,7 +13,7 @@ agrega al final o se sube la versión, nunca se reemplaza en silencio.
 | Qué | Identificador | Ejemplo |
 |---|---|---|
 | Tarea o evento | `N`, número correlativo, nunca se reutiliza | `12` |
-| Reunión | `ID`, ocho caracteres | `3f9a1c2e` |
+| Reunión | `ID`: ocho caracteres si llegó por Chat, doce si llegó por la app del celular | `3f9a1c2e`, `a1b2c3d4e5f6` |
 | Persona | correo de la empresa, en minúsculas | `diana@empresa.com` |
 
 Una tarea que salió de una reunión lleva el `ID` de esa reunión en la columna
@@ -142,3 +142,16 @@ foto del momento de la reunión.
 - **El audio de las notas de voz.** Se guarda en `Asistente / Bandeja` solo hasta
   procesarlo, y después va a la papelera de Drive; queda la tarea.
 - **Las conversaciones con el Asistente.** Solo queda lo que se anotó.
+
+## Lo que guarda la app del celular
+
+Fuera de la planilla, en las **propiedades del script** (no son datos para
+consultar, pero conviene saber que existen):
+
+- `TELEFONO_<clave>`: cada teléfono vinculado, con nombre, correo y fecha. Para
+  desvincular uno a la fuerza, se borra esa propiedad.
+- `SUBIDA_<ID>`: una grabación que está llegando. Se borra sola al terminar;
+  si una queda colgada más de una semana, se puede borrar.
+
+Una grabación de la app, una vez completa, es una reunión más: misma fila en
+**Reuniones**, misma carpeta y mismo `minuta.json`.
