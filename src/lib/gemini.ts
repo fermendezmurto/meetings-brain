@@ -20,7 +20,7 @@ export async function subirArchivo(
   const clave = exigirClave()
   const { size } = await fs.stat(ruta)
 
-  const inicio = await fetch(`${BASE}/upload/v1beta/files?key=${clave}`, {
+  const inicio = await fetch(`${BASE}/upload/v1beta/files?key=${encodeURIComponent(clave)}`, {
     method: 'POST',
     headers: {
       'X-Goog-Upload-Protocol': 'resumable',
@@ -62,7 +62,7 @@ export async function subirArchivo(
 async function esperarProcesado(nombre: string): Promise<void> {
   const clave = exigirClave()
   for (let intento = 0; intento < 60; intento++) {
-    const r = await fetch(`${BASE}/v1beta/${nombre}?key=${clave}`)
+    const r = await fetch(`${BASE}/v1beta/${nombre}?key=${encodeURIComponent(clave)}`)
     if (!r.ok) throw new Error(`Gemini fallo al consultar el archivo: ${await r.text()}`)
     const { state } = (await r.json()) as { state: string }
     if (state === 'ACTIVE') return
@@ -87,7 +87,7 @@ export async function pedirJson<T>(
 ): Promise<T> {
   const clave = exigirClave()
   const r = await fetch(
-    `${BASE}/v1beta/models/${modelo}:generateContent?key=${clave}`,
+    `${BASE}/v1beta/models/${modelo}:generateContent?key=${encodeURIComponent(clave)}`,
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -111,6 +111,10 @@ export async function pedirJson<T>(
   return JSON.parse(texto) as T
 }
 
+/**
+ * La clave viaja en la direccion, asi que se escapa: el formato de las claves
+ * de Google cambio y no conviene asumir que no trae caracteres especiales.
+ */
 function exigirClave(): string {
   if (!config.geminiKey) throw new Error('Falta GEMINI_API_KEY')
   return config.geminiKey
