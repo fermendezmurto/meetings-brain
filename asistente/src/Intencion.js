@@ -23,6 +23,9 @@ function interpretarComando(texto) {
   if (/^(pendientes|mis pendientes|tareas|mis tareas|que tengo|que tengo pendiente|que tengo que hacer|que me toca)$/.test(t)) {
     return { tipo: 'pendientes' };
   }
+  if (/^(vincular|vincular app|vincular celular|vincular telefono|conectar app|conectar celular|codigo|codigo app)$/.test(t)) {
+    return { tipo: 'vincular' };
+  }
   if (/^(pedidos|mis pedidos|lo que pedi|que pedi|que pedi yo|lo que encargue)$/.test(t)) {
     return { tipo: 'pedidos' };
   }

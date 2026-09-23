@@ -854,6 +854,27 @@ describe('reuniones', () => {
     expect(g.correos.some((c) => c.subject === 'Minuta: Seguimiento comercial')).toBe(true)
   })
 
+  it('un audio de más de 50 MB llega entero a Gemini, de a pedazos y en orden', () => {
+    const g = reunionEnCola({ minuta: MINUTA, minutosDeAudio: 180, tramo: { turnos: [] } })
+    // Tres horas de reunión: más de lo que Apps Script puede bajar de una vez.
+    const audio = g.archivos.get(fila(g)[7])
+    const bytes = Buffer.alloc(70 * 1024 * 1024 + 123)
+    for (let i = 0; i < bytes.length; i += 4096) bytes[i] = (i / 4096) % 251
+    audio.blob.bytes = bytes
+
+    g.llamar('procesarReuniones')
+
+    expect(g.subidoAGemini().equals(bytes)).toBe(true)
+    const pedazos = g.pedidosGemini.filter((p) => p.tipo === 'subida-datos')
+    expect(pedazos).toHaveLength(5)
+    expect(pedazos.map((p) => p.cuerpo.headers['X-Goog-Upload-Command'])).toEqual(
+      ['upload', 'upload', 'upload', 'upload', 'upload, finalize'])
+    // Ningún pedido pasa el límite de 50 MB de Apps Script.
+    for (const p of pedazos) expect(p.cuerpo.payload.bytes.length).toBeLessThanOrEqual(50 * 1024 * 1024)
+    expect(g.pedidosDrive.filter((p) => p.tipo === 'leer')).toHaveLength(5)
+    expect(fila(g)[16]).toBe(180)
+  })
+
   it('un audio demasiado grande se rechaza con explicación, sin quedar a medias', () => {
     const g = instalado()
     const r = escribir(g, FER, 'reunión', [g.subirAChat(60 * 1024 * 1024)])

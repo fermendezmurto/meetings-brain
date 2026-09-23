@@ -92,6 +92,8 @@ function responder_(evento) {
       return listarPedidos(pedidosDe_(quien.email), hoy);
     case 'cerrar':
       return cerrar_(quien, comando.numero);
+    case 'vincular':
+      return textoVincular(codigoDeVinculacion_(quien));
     default:
       return atenderNota_(quien, { texto: comando.texto });
   }

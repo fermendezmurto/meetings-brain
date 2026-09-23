@@ -35,6 +35,14 @@ export interface Guion {
   /** Calendar o Tasks sin habilitar en el proyecto. */
   fallaCalendar?: boolean
   fallaTasks?: boolean
+  /** Cada cuántos bytes acepta pedazos la subida a Gemini. */
+  granularidadGemini?: number
+  /**
+   * Qué pasa con el pedazo número n que llega a una subida de Drive: 'perder'
+   * lo guarda pero la respuesta no llega (se corta la conexión), un número es
+   * un error de Drive.
+   */
+  fallaDrive?: (n: number) => 'perder' | number | undefined
 }
 
 export function crearGoogle(opciones: { ahora: string; guion?: Guion }) {
@@ -47,6 +55,9 @@ export function crearGoogle(opciones: { ahora: string; guion?: Guion }) {
   const disparadores: any[] = []
   const props = new Map<string, string>()
   const medios = new Map<string, { bytes: Buffer; tipo: string }>()
+  const pedidosDrive: { tipo: string; url: string; o: any }[] = []
+  const sesionesDrive = new Map<string, { nombre: string; carpeta: string; tipo: string; total: number; bytes: Buffer; pedazos: number }>()
+  let subidaGemini = Buffer.alloc(0)
 
   let contexto: any
 
@@ -155,6 +166,8 @@ export function crearGoogle(opciones: { ahora: string; guion?: Guion }) {
         let i = 0
         return { hasNext: () => i < hijas.length, next: () => hijas[i++] }
       },
+      enPapelera: false,
+      setTrashed: (v: boolean) => { c.enPapelera = v; return c },
       createFile: (a: any, contenido?: string, tipo?: string) => {
         const blob = a instanceof Blob ? a : new Blob(Buffer.from(contenido ?? '', 'utf8'), tipo ?? 'text/plain', a)
         return nuevoArchivo(blob, id)
@@ -349,9 +362,67 @@ export function crearGoogle(opciones: { ahora: string; guion?: Guion }) {
     return typeof r === 'function' ? r(pedido) : r
   }
 
+  const aBuffer = (payload: any) =>
+    payload instanceof Blob ? payload.bytes
+    : Array.isArray(payload) ? Buffer.from(payload.map((b: number) => b & 255))
+    : Buffer.from(String(payload ?? ''), 'utf8')
+
+  /** La API de Drive: leer un archivo por rangos y subir uno de a pedazos. */
+  function drive(url: string, o: any) {
+    const encabezados = o.headers ?? {}
+    if (encabezados.Authorization !== 'Bearer token-de-prueba') return respuesta(401, 'sin credenciales')
+    const lectura = url.match(/^https:\/\/www\.googleapis\.com\/drive\/v3\/files\/([\w-]+)\?alt=media/)
+    if (lectura) {
+      pedidosDrive.push({ tipo: 'leer', url, o })
+      const a = archivos.get(lectura[1])
+      if (!a) return respuesta(404, 'no existe')
+      const [, desde, hasta] = String(encabezados.Range).match(/^bytes=(\d+)-(\d+)$/)!.map(Number)
+      return respuesta(206, '', {}, new Blob(a.blob.bytes.subarray(desde, hasta + 1), a.blob.tipo))
+    }
+    if (url.startsWith('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable') && !url.includes('upload_id=')) {
+      pedidosDrive.push({ tipo: 'sesion', url, o })
+      const meta = JSON.parse(o.payload)
+      const id = randomUUID().slice(0, 8)
+      sesionesDrive.set(id, {
+        nombre: meta.name, carpeta: meta.parents[0], tipo: encabezados['X-Upload-Content-Type'],
+        total: Number(encabezados['X-Upload-Content-Length']), bytes: Buffer.alloc(0), pedazos: 0,
+      })
+      return respuesta(200, '', { Location: url + '&upload_id=' + id })
+    }
+    const sesion = url.match(/upload_id=([\w-]+)/)
+    if (sesion && o.method === 'put') {
+      const s = sesionesDrive.get(sesion[1])
+      if (!s) return respuesta(404, 'sesión vencida')
+      if (o.followRedirects !== false) throw new Error('Drive contesta 308 a cada pedazo: hay que pedir followRedirects: false')
+      const rango = String(encabezados['Content-Range'])
+      const guardados = () => (s.bytes.length ? { Range: 'bytes=0-' + (s.bytes.length - 1) } : {})
+      const terminar = () => {
+        const a = nuevoArchivo(new Blob(s.bytes, s.tipo, s.nombre), s.carpeta)
+        return respuesta(200, { kind: 'drive#file', id: a.getId(), name: s.nombre })
+      }
+      if (/^bytes \*\//.test(rango)) {
+        pedidosDrive.push({ tipo: 'consulta', url, o })
+        return s.bytes.length === s.total ? terminar() : respuesta(308, '', guardados())
+      }
+      const [, desde, hasta, total] = rango.match(/^bytes (\d+)-(\d+)\/(\d+)$/)!.map(Number)
+      const datos = aBuffer(o.payload)
+      pedidosDrive.push({ tipo: 'pedazo', url, o })
+      if (total !== s.total || hasta - desde + 1 !== datos.length) return respuesta(400, 'rango mal armado')
+      if (desde !== s.bytes.length) return respuesta(400, 'fuera de orden')
+      if (hasta !== total - 1 && datos.length % (256 * 1024) !== 0) return respuesta(400, 'pedazo que no es múltiplo de 256 KB')
+      const falla = guion.fallaDrive?.(++s.pedazos)
+      if (typeof falla === 'number') return respuesta(falla, 'falla simulada')
+      s.bytes = Buffer.concat([s.bytes, datos])
+      if (falla === 'perder') throw new Error('Se cortó la conexión')
+      return hasta === total - 1 ? terminar() : respuesta(308, '', guardados())
+    }
+    throw new Error('Pedido a Drive inesperado: ' + url)
+  }
+
   const UrlFetchApp = {
     fetch: (url: string, o: any = {}) => {
       const encabezados = o.headers ?? {}
+      if (url.startsWith('https://www.googleapis.com/')) return drive(url, o)
       if (url.startsWith('https://chat.googleapis.com/v1/media/')) {
         const recurso = url.slice('https://chat.googleapis.com/v1/media/'.length).split('?')[0]
         const m = medios.get(recurso)
@@ -367,11 +438,23 @@ export function crearGoogle(opciones: { ahora: string; guion?: Guion }) {
 
       if (url.endsWith('/upload/v1beta/files')) {
         pedidosGemini.push({ tipo: 'subida-inicio', cuerpo: o, claveEnEncabezado, url })
-        return respuesta(200, '', { 'X-Goog-Upload-URL': 'https://generativelanguage.googleapis.com/subida/123' })
+        subidaGemini = Buffer.alloc(0)
+        return respuesta(200, '', {
+          'X-Goog-Upload-URL': 'https://generativelanguage.googleapis.com/subida/123',
+          'X-Goog-Upload-Chunk-Granularity': String(guion.granularidadGemini ?? 8 * 1024 * 1024),
+        })
       }
       if (url.endsWith('/subida/123')) {
         pedidosGemini.push({ tipo: 'subida-datos', cuerpo: o, claveEnEncabezado, url })
-        return respuesta(200, { file: { name: 'files/abc', uri: 'https://generativelanguage.googleapis.com/v1beta/files/abc', state: 'PROCESSING' } })
+        const datos = aBuffer(o.payload)
+        if (Number(encabezados['X-Goog-Upload-Offset']) !== subidaGemini.length) return respuesta(400, 'fuera de orden')
+        subidaGemini = Buffer.concat([subidaGemini, datos])
+        if (!String(encabezados['X-Goog-Upload-Command']).includes('finalize')) {
+          const granularidad = guion.granularidadGemini ?? 8 * 1024 * 1024
+          if (datos.length % granularidad !== 0) return respuesta(400, 'pedazo que no es múltiplo de la granularidad')
+          return respuesta(200, '')
+        }
+        return respuesta(200, { file: { name: 'files/abc', uri: 'https://generativelanguage.googleapis.com/v1beta/files/abc', state: 'PROCESSING', sizeBytes: String(subidaGemini.length) } })
       }
       if (url.endsWith('/v1beta/files/abc')) return respuesta(200, { state: 'ACTIVE' })
       if (url.includes('/v1beta/models?')) {
@@ -451,7 +534,9 @@ export function crearGoogle(opciones: { ahora: string; guion?: Guion }) {
         return new contexto.Date(`${fecha}T${hora}:00-03:00`)
       },
       getUuid: () => randomUUID(),
-      base64Encode: (bytes: number[]) => Buffer.from(bytes).toString('base64'),
+      base64Encode: (bytes: number[]) => Buffer.from(bytes.map((b) => b & 255)).toString('base64'),
+      // Como en Apps Script: bytes con signo, de -128 a 127.
+      base64Decode: (texto: string) => Array.from(Buffer.from(texto, 'base64')).map((b) => (b > 127 ? b - 256 : b)),
       sleep: () => {},
     },
     ScriptApp: {
@@ -470,6 +555,14 @@ export function crearGoogle(opciones: { ahora: string; guion?: Guion }) {
       },
     },
     MailApp: { sendEmail: (m: any) => { correos.push(m) } },
+    ContentService: {
+      MimeType: { JSON: 'application/json' },
+      createTextOutput: (texto: string) => {
+        const salida: any = { texto, tipo: 'text/plain', getContent: () => texto }
+        salida.setMimeType = (t: string) => { salida.tipo = t; return salida }
+        return salida
+      },
+    },
     SpreadsheetApp, DriveApp, DocumentApp, UrlFetchApp, Session, CalendarApp, Tasks, CacheService,
   }
 
@@ -491,6 +584,9 @@ export function crearGoogle(opciones: { ahora: string; guion?: Guion }) {
     ctx: contexto,
     correos,
     pedidosGemini,
+    pedidosDrive,
+    /** Lo que recibió Gemini en la última subida, entero. */
+    subidoAGemini: () => subidaGemini,
     disparadores,
     props,
     documentos,

@@ -148,14 +148,15 @@ function parteAudioIncrustado_(blob, tipo) {
 }
 
 /**
- * Un audio grande se sube primero a la Files API y se usa por referencia. El
- * blob se manda tal cual, sin pasarlo a un arreglo de bytes: una reunión
- * convertida a arreglo no entra en la memoria de Apps Script.
- *
- * @param {number} tamanio en bytes. Se pide aparte porque medir el blob
- *   obligaría a cargarlo entero en memoria.
+ * Un audio grande se sube primero a la Files API y se usa por referencia.
+ * Apps Script no deja bajar ni mandar más de 50 MB de una vez, así que un
+ * audio largo (una reunión de tres horas) se lee de Drive de a pedazos y se le
+ * entrega a Gemini en el mismo orden, sin tenerlo nunca entero en memoria. Los
+ * pedazos van como blob, nunca como arreglo de bytes, por lo mismo.
  */
-function subirAGemini_(blob, tamanio, tipo, nombre) {
+const TRAMO_SUBIDA_BYTES = 16 * 1024 * 1024;
+
+function subirDeDriveAGemini_(idArchivo, tamanio, tipo, nombre) {
   const mime = tipoParaGemini(tipo);
   const inicio = UrlFetchApp.fetch(GEMINI + '/upload/v1beta/files', {
     method: 'post',
@@ -175,19 +176,42 @@ function subirAGemini_(blob, tamanio, tipo, nombre) {
   }
   const url = encabezado_(inicio, 'x-goog-upload-url');
   if (!url) throw new Error('Gemini no devolvió la dirección de subida.');
+  // Cada pedazo, salvo el último, tiene que ser múltiplo de lo que pide Gemini.
+  const granularidad = Number(encabezado_(inicio, 'x-goog-upload-chunk-granularity')) || 8 * 1024 * 1024;
+  const tramo = Math.max(1, Math.floor(TRAMO_SUBIDA_BYTES / granularidad)) * granularidad;
 
-  const subida = UrlFetchApp.fetch(url, {
-    method: 'post',
-    headers: { 'X-Goog-Upload-Offset': '0', 'X-Goog-Upload-Command': 'upload, finalize' },
-    payload: blob,
-    muteHttpExceptions: true,
-  });
-  if (subida.getResponseCode() !== 200) {
-    throw new Error('Gemini falló al recibir el audio: ' + subida.getContentText().slice(0, 300));
+  let archivo = null;
+  for (let desde = 0; desde < tamanio; desde += tramo) {
+    const hasta = Math.min(desde + tramo, tamanio) - 1;
+    const ultimo = hasta === tamanio - 1;
+    const pedazo = leerDeDrive_(idArchivo, desde, hasta);
+    const r = UrlFetchApp.fetch(url, {
+      method: 'post',
+      headers: { 'X-Goog-Upload-Offset': String(desde), 'X-Goog-Upload-Command': ultimo ? 'upload, finalize' : 'upload' },
+      payload: pedazo,
+      muteHttpExceptions: true,
+    });
+    if (r.getResponseCode() !== 200) {
+      throw new Error('Gemini falló al recibir el audio: ' + r.getContentText().slice(0, 300));
+    }
+    if (ultimo) archivo = JSON.parse(r.getContentText()).file;
   }
-  const archivo = JSON.parse(subida.getContentText()).file;
+  if (!archivo) throw new Error('El audio está vacío.');
   esperarActivo_(archivo.name);
   return { file_data: { mime_type: mime, file_uri: archivo.uri } };
+}
+
+/** Un pedazo de un archivo de Drive, del byte desde al hasta inclusive. */
+function leerDeDrive_(idArchivo, desde, hasta) {
+  const r = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + idArchivo + '?alt=media&supportsAllDrives=true', {
+    headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken(), Range: 'bytes=' + desde + '-' + hasta },
+    muteHttpExceptions: true,
+  });
+  const codigo = r.getResponseCode();
+  if (codigo !== 206 && codigo !== 200) {
+    throw new Error('Drive no devolvió el audio (' + codigo + '): ' + r.getContentText().slice(0, 200));
+  }
+  return r.getBlob();
 }
 
 /** Gemini tarda unos segundos en dejar listo un audio recién subido. */

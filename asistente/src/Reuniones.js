@@ -123,7 +123,7 @@ function registrarFalla_(r, err) {
 function asegurarEnGemini_(r) {
   if (r.geminiUri && Date.now() - r.subidoEn < VIDA_EN_GEMINI_MS) return;
   const audio = DriveApp.getFileById(r.audioId);
-  const parte = subirAGemini_(audio.getBlob(), audio.getSize(), r.tipo || audio.getMimeType(), audio.getName());
+  const parte = subirDeDriveAGemini_(r.audioId, audio.getSize(), r.tipo || audio.getMimeType(), audio.getName());
   actualizarReunion_(r, { geminiUri: parte.file_data.file_uri, subidoEn: Date.now() });
 }
 

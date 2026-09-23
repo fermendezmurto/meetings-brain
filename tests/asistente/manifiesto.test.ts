@@ -38,6 +38,10 @@ describe('manifiesto', () => {
     }
   })
 
+  it('publica la aplicación web para la app del celular, que no inicia sesión con Google', () => {
+    expect(m.webapp).toEqual({ executeAs: 'USER_DEPLOYING', access: 'ANYONE_ANONYMOUS' })
+  })
+
   it('habilita el servicio avanzado de Google Tasks que usa el código', () => {
     const servicios = m.dependencies.enabledAdvancedServices
     expect(servicios).toContainEqual({ userSymbol: 'Tasks', version: 'v1', serviceId: 'tasks' })

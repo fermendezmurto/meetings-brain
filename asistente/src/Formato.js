@@ -10,7 +10,8 @@ function textoAyuda() {
     '*Qué podés hacer conmigo*',
     '',
     '• *Anotar algo:* escribime o mandame un audio. "Pedile a Diana el presupuesto para el viernes", "recordame llamar al estudio mañana".',
-    '• *Una reunión:* grabala con la grabadora del teléfono y mandame el audio. Si querés, escribí con quién era. Te aviso cuando esté la minuta.',
+    '• *Una reunión:* grabala con la app Asistente del celular, o mandame el audio. Te aviso cuando esté la minuta.',
+    '• *vincular:* te doy el código para conectar la app del celular.',
     '• *pendientes:* lo que tenés que hacer vos.',
     '• *pedidos:* lo que les pediste a otros.',
     '• *listo 12:* cierra la tarea 12.',
@@ -24,6 +25,15 @@ function textoBienvenida(nombre) {
     textoAyuda(),
     '',
     '_Estamos en piloto: no me mandes todavía nada confidencial._',
+  ].join('\n');
+}
+
+/** El código que la persona escribe en la app para vincular su teléfono. */
+function textoVincular(codigo) {
+  return [
+    '*Código para la app:* ' + codigo.slice(0, 3) + ' ' + codigo.slice(3),
+    '',
+    'Abrí la app Asistente en tu celular y escribilo. Vale 10 minutos y sirve una sola vez.',
   ].join('\n');
 }
 

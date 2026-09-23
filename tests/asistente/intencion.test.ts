@@ -13,6 +13,9 @@ describe('interpretarComando', () => {
     ['¿Qué pedí?', 'pedidos'],
     ['ayuda', 'ayuda'],
     ['Hola', 'ayuda'],
+    ['vincular', 'vincular'],
+    ['Vincular celular', 'vincular'],
+    ['código', 'vincular'],
   ])('"%s" es %s', (texto, tipo) => {
     expect(interpretarComando(texto).tipo).toBe(tipo)
   })

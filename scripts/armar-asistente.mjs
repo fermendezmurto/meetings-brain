@@ -1,7 +1,7 @@
 // Junta los archivos del Asistente en uno solo, listo para pegar en Apps Script.
 //
 // Apps Script no tiene import ni export: todos los archivos comparten el mismo
-// espacio global. Pegar uno solo en vez de trece es lo que hace que instalarlo
+// espacio global. Pegar uno solo en vez de dieciocho es lo que hace que instalarlo
 // no requiera saber programar.
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'node:fs'
 import path from 'node:path'
@@ -11,7 +11,7 @@ const raiz = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'asis
 
 export const ORDEN = [
   'Config.js', 'Modelos.js', 'Texto.js', 'Fechas.js', 'Agenda.js', 'Intencion.js', 'Eventos.js', 'Prompts.js',
-  'Formato.js', 'Base.js', 'Gemini.js', 'Google.js', 'Avisos.js', 'Chat.js', 'Bandeja.js', 'Reuniones.js', 'Instalar.js',
+  'Formato.js', 'Base.js', 'Gemini.js', 'Google.js', 'Avisos.js', 'Chat.js', 'Bandeja.js', 'Reuniones.js', 'Web.js', 'Instalar.js',
 ]
 
 export function armar() {
