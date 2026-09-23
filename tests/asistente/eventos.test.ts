@@ -34,6 +34,11 @@ describe('normalizarEvento', () => {
     expect(ev.mensaje.text).toBe('hola')
   })
 
+  it('reconoce los comandos de la app y cuando lo quitan de un espacio', () => {
+    expect(e.normalizarEvento({ chat: { user: {}, appCommandPayload: { message: { text: '' } } } }).tipo).toBe('APP_COMMAND')
+    expect(e.normalizarEvento({ chat: { user: {}, removedFromSpacePayload: { space: {} } } }).tipo).toBe('REMOVED_FROM_SPACE')
+  })
+
   it('reconoce cuando lo agregan a una conversación', () => {
     expect(e.normalizarEvento({ chat: { user: {}, addedToSpacePayload: { space: {} } } }).tipo).toBe('ADDED_TO_SPACE')
     expect(e.normalizarEvento({ type: 'ADDED_TO_SPACE' }).tipo).toBe('ADDED_TO_SPACE')

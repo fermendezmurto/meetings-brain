@@ -220,6 +220,16 @@ describe('conversación', () => {
     expect(escribir(g, FER, 'anotame algo')).toContain('límite de pedidos del nivel gratuito')
   })
 
+  it('con una sola función para todos los activadores, saluda, ayuda y no le contesta a quien lo quitó', () => {
+    const g = instalado()
+    const usuario = { displayName: FER.nombre, email: FER.email }
+    const agregado = g.llamar('onMessage', { chat: { user: usuario, addedToSpacePayload: { space: { spaceType: 'DIRECT_MESSAGE' } } } })
+    expect(agregado.hostAppDataAction.chatDataAction.createMessageAction.message.text).toContain('Hola, Fernando')
+    const comando = g.llamar('onMessage', { chat: { user: usuario, appCommandPayload: { message: {}, space: {} } } })
+    expect(comando.hostAppDataAction.chatDataAction.createMessageAction.message.text).toContain('Qué podés hacer conmigo')
+    expect(g.llamar('onMessage', { chat: { user: usuario, removedFromSpacePayload: { space: {} } } })).toEqual({})
+  })
+
   it('contesta en el formato nuevo de Google cuando llega en ese formato', () => {
     const g = instalado()
     const r = g.llamar('onMessage', {

@@ -8,9 +8,10 @@ function normalizarEvento(e) {
   e = e || {};
   if (e.chat) {
     const c = e.chat;
-    const carga = c.messagePayload || c.addedToSpacePayload || c.removedFromSpacePayload || {};
+    const carga = c.messagePayload || c.appCommandPayload || c.addedToSpacePayload || c.removedFromSpacePayload || {};
     let tipo = 'OTRO';
     if (c.messagePayload) tipo = 'MESSAGE';
+    else if (c.appCommandPayload) tipo = 'APP_COMMAND';
     else if (c.addedToSpacePayload) tipo = 'ADDED_TO_SPACE';
     else if (c.removedFromSpacePayload) tipo = 'REMOVED_FROM_SPACE';
     return { formato: 'complemento', tipo: tipo, usuario: c.user || {}, mensaje: carga.message || {}, espacio: carga.space || {} };

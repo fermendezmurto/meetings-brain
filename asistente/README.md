@@ -73,12 +73,16 @@ Esta parte es la más larga, pero se hace una sola vez.
 
 1. Entrá a **console.cloud.google.com** y, arriba a la izquierda, elegí el
    proyecto **reuniones**.
-2. En la página principal del proyecto (*Panel*), anotá el **Número de
-   proyecto** (son solo dígitos, no el nombre).
-3. Menú ☰ → **APIs y servicios** → **Pantalla de consentimiento de OAuth**.
-   Si te pide configurarla: tipo de usuario **Interno**, nombre de la app
-   **Asistente**, tu correo en los campos de contacto, y guardá. Si ya estaba
-   configurada, seguí.
+2. Anotá el **Número de proyecto**: son solo dígitos, y no es lo mismo que el
+   ID (los proyectos creados desde AI Studio tienen un ID tipo
+   `gen-lang-client-…`). Está en **IAM y administración → Configuración**.
+3. Buscá **Google Auth Platform** (en algunas cuentas, *Pantalla de
+   consentimiento de OAuth*). Si dice **Comenzar**: nombre de la app
+   **Asistente**, tu correo, público **Interno**, y crear. El botón *Crear
+   cliente de OAuth* no hace falta. Si ya estaba configurada, seguí.
+
+   Si **Interno** no aparece, el proyecto quedó fuera de la organización de la
+   empresa: en *Administrar recursos* se ve bajo qué organización está.
 
 ### 2b. Unir el Asistente a ese proyecto
 
@@ -86,32 +90,63 @@ Esta parte es la más larga, pero se hace una sola vez.
    **Proyecto de Google Cloud** → **Cambiar proyecto**.
 5. Pegá el **Número de proyecto** del paso 2 y tocá **Establecer proyecto**.
 
-### 2c. Sacar el identificador de implementación
+### 2c. Habilitar las APIs
 
-6. En el editor, arriba a la derecha: **Implementar** → **Probar
-   implementaciones** (*Test deployments*).
-7. Copiá el **ID de implementación** que aparece. Es un texto largo.
+Al unir el Asistente a un proyecto propio, Google tiene que habilitar ahí las
+APIs que usa, y a veces no puede hacerlo solo (el error dice *Permission denied
+while enabling APIs*). Desde **console.cloud.google.com**, con el proyecto
+elegido, buscá cada una y tocá **Habilitar**:
+
+- Google Drive API
+- Google Sheets API
+- Google Docs API
+- Google Chat API
+
+Después volvé a correr **instalar**: al cambiar de proyecto se pierden los
+permisos que habías dado, y así se vuelven a pedir.
+
+### 2d. Sacar el identificador de implementación
+
+6. En el editor, arriba a la derecha: **Implementar** → **Implementaciones de
+   prueba**.
+7. Copiá el **ID de implementación HEAD**. Si aparece otro más abajo, bajo
+   *Complemento de Google Workspace*, es el mismo.
 
 > Esta implementación de prueba siempre usa la última versión guardada del
 > código. Cuando haya una versión nueva, alcanza con pegarla y guardar.
 
-### 2d. Dar de alta la app de Chat
+### 2e. Dar de alta la app de Chat
 
-8. En **console.cloud.google.com** (proyecto reuniones), buscá arriba
-   **Google Chat API** y tocá **Habilitar**.
-9. Entrá a la pestaña **Configuración** (*Configuration*) y completá:
+Google Chat ahora crea las apps como **complementos de Workspace**. Arriba de
+todo hay una casilla, **"Crea esta app de Chat como complemento de
+Workspace"**: dejala **marcada**. Desmarcarla no tiene vuelta atrás, y el
+Asistente entiende los dos formatos.
+
+8. En **console.cloud.google.com** (proyecto reuniones), entrá a **Google Chat
+   API** → pestaña **Configuración**.
+9. Completá:
    - **Nombre de la app:** `Asistente`
    - **URL del avatar:** `https://developers.google.com/chat/images/quickstart-app-avatar.png`
      (o cualquier imagen pública)
    - **Descripción:** `Anota tareas y arma minutas`
-   - Si aparece **"Compilar esta app de Chat como complemento de Google
-     Workspace"**, dejala **desmarcada**.
-   - **Funciones:** marcá **Recibir mensajes 1:1** y **Unirse a espacios y
-     conversaciones grupales**.
-   - **Configuración de conexión:** **Proyecto de Apps Script**, y pegá el **ID
-     de implementación** del paso 7.
-   - **Visibilidad:** marcá la opción para **personas y grupos específicos** y
-     agregá los correos del piloto (hasta 5), incluido el tuyo.
+   - **Funciones interactivas:** habilitadas.
+   - **Funcionalidad:** marcá **Unirse a espacios y conversaciones grupales**.
+   - **Configuración de conexión:** **Apps Script**, y pegá el **ID de
+     implementación** del paso 7. La nota que recomienda una implementación con
+     versiones se puede ignorar en el piloto.
+   - **Activadores:** los nombres de las funciones, exactamente así:
+
+     | Activador | Función |
+     |---|---|
+     | Comando de la app | `onMessage` |
+     | Se agregó al espacio | `onAddedToSpace` |
+     | Mensaje | `onMessage` |
+     | Se quitó del espacio | `onRemovedFromSpace` |
+
+     Si ofrece una sola función común para todos, poné `onMessage`.
+   - **Visibilidad:** personas y grupos específicos, con los correos del piloto
+     (hasta 5), incluido el tuyo.
+   - **Registros:** marcá **Registrar errores en Logging**.
 10. **Guardar**.
 
 ---
@@ -161,6 +196,9 @@ tareas:** así la conoce.
 | "No pude bajar el audio de Chat" | Subí el audio a Drive y mandale el **enlace** al Asistente: lo lee igual. |
 | Te llega "No pude procesar la reunión" | Lo intentó tres veces. El correo trae el motivo, y el audio sigue en Drive. |
 | El Asistente no aparece en Chat | Revisá la **Visibilidad** del paso 9 de la Parte 2: tu correo tiene que estar. |
+| "Permission denied while enabling APIs" | Habilitá a mano las cuatro APIs del paso 2c y volvé a correr instalar. |
+| "Google retiró el modelo…" | El mismo mensaje dice qué valor poner en la propiedad `GEMINI_MODEL`. |
+| "Gemini está saturado en este momento" | Es de Google y suele durar minutos. El Asistente reintenta solo con las reuniones. |
 
 Para ver qué hizo el Asistente por dentro: en script.google.com, menú de la
 izquierda → **Ejecuciones**.

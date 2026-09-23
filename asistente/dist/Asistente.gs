@@ -270,9 +270,10 @@ function normalizarEvento(e) {
   e = e || {};
   if (e.chat) {
     const c = e.chat;
-    const carga = c.messagePayload || c.addedToSpacePayload || c.removedFromSpacePayload || {};
+    const carga = c.messagePayload || c.appCommandPayload || c.addedToSpacePayload || c.removedFromSpacePayload || {};
     let tipo = 'OTRO';
     if (c.messagePayload) tipo = 'MESSAGE';
+    else if (c.appCommandPayload) tipo = 'APP_COMMAND';
     else if (c.addedToSpacePayload) tipo = 'ADDED_TO_SPACE';
     else if (c.removedFromSpacePayload) tipo = 'REMOVED_FROM_SPACE';
     return { formato: 'complemento', tipo: tipo, usuario: c.user || {}, mensaje: carga.message || {}, espacio: carga.space || {} };
@@ -1154,9 +1155,15 @@ function avisoMatutino() {
  * (una reunión) se deja anotado y lo procesa procesarReuniones() aparte.
  */
 
+/**
+ * En la configuración de Chat, cada activador (mensaje, agregado a un espacio,
+ * quitado, comando) apunta a una función. Esta los atiende a todos, por si se
+ * configuró una sola función común.
+ */
 function onMessage(e) {
   const evento = normalizarEvento(e);
   if (evento.tipo === 'ADDED_TO_SPACE') return onAddedToSpace(e);
+  if (evento.tipo === 'REMOVED_FROM_SPACE') return onRemovedFromSpace(e);
   try {
     return contestar(evento, responder_(evento));
   } catch (err) {
@@ -1183,6 +1190,8 @@ function onAddedToSpace(e) {
 
 function onRemovedFromSpace() {
   // Nada que limpiar: las tareas quedan en la base aunque me saquen del espacio.
+  // Tampoco hay a quién contestarle.
+  return {};
 }
 
 function quienEscribe_(evento) {
