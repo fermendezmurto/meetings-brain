@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { cargar, TODOS } from './cargar'
 
-const { configRazonamiento, modeloDeRespaldo, elegirModeloLiviano, mensajeModeloRetirado, esErrorPasajero, convieneReintentar } = cargar(...TODOS)
+const { configRazonamiento, modeloDeRespaldo, elegirModeloLiviano, modeloDelIntento, mensajeModeloRetirado, esErrorPasajero, convieneReintentar } = cargar(...TODOS)
 
 describe('configRazonamiento', () => {
   it('a la familia 2.5 Flash le acota el razonamiento con un presupuesto', () => {
@@ -59,7 +59,9 @@ describe('errores pasajeros', () => {
     // En la primera prueba real Google tardó en decir "saturado", y la regla
     // anterior, basada en esa demora, dejó afuera al respaldo justo ahí.
     expect(convieneReintentar(503, 12000)).toBe(true)
-    expect(convieneReintentar(503, 3000)).toBe(false)
+    // Con menos de 10 segundos no da para contestar, anotar y agendar antes
+    // de que Chat deje de esperar.
+    expect(convieneReintentar(503, 9000)).toBe(false)
     // Sin corte, como en las reuniones, siempre hay tiempo.
     expect(convieneReintentar(503, undefined)).toBe(true)
     expect(convieneReintentar(400, 20000)).toBe(false)
@@ -91,5 +93,13 @@ describe('elegirModeloLiviano', () => {
 
   it('si no hay ninguno liviano, no inventa', () => {
     expect(elegirModeloLiviano(['models/gemini-3.6-flash'])).toBe('')
+  })
+})
+
+describe('modeloDelIntento', () => {
+  it('alterna los modelos disponibles, porque cada uno tiene su capacidad', () => {
+    const turno = ['liviano', 'grande']
+    expect([0, 1, 2, 3, 4].map((n) => modeloDelIntento(turno, n))).toEqual(['liviano', 'grande', 'liviano', 'grande', 'liviano'])
+    expect([0, 1, 2].map((n) => modeloDelIntento(['unico'], n))).toEqual(['unico', 'unico', 'unico'])
   })
 })

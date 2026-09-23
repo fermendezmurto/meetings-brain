@@ -44,10 +44,28 @@ function esErrorPasajero(codigo) {
 }
 
 /**
- * Cuánto hace falta para que un segundo intento tenga chance de terminar. Una
- * nota con el modelo liviano suele contestar bastante antes.
+ * Cuánto tiene que quedar para que valga la pena otro intento: lo que tarda
+ * Gemini en contestar una nota, más anotarla y agendarla, antes de que Chat
+ * deje de esperar.
  */
-const MARGEN_REINTENTO_MS = 8000;
+const MARGEN_REINTENTO_MS = 10000;
+
+/**
+ * Cuántos pedidos como máximo. En el nivel gratuito la saturación es
+ * intermitente: en la prueba real un pedido pasó y el siguiente no, así que
+ * insistir unas veces alternando modelos rinde. Sin corte de tiempo, como en
+ * las reuniones, se insiste menos: la próxima corrida vuelve a intentar.
+ */
+const MAX_PEDIDOS_CON_CORTE = 6;
+const MAX_PEDIDOS_SIN_CORTE = 4;
+
+/**
+ * El modelo del intento número n (desde 0): se alternan los disponibles. Da
+ * más chances que insistir con uno solo, porque cada uno tiene su capacidad.
+ */
+function modeloDelIntento(modelos, n) {
+  return modelos[n % modelos.length];
+}
 
 /**
  * Se reintenta si el error es pasajero y queda tiempo. Lo que importa no es

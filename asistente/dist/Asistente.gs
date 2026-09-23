@@ -128,10 +128,28 @@ function esErrorPasajero(codigo) {
 }
 
 /**
- * Cuánto hace falta para que un segundo intento tenga chance de terminar. Una
- * nota con el modelo liviano suele contestar bastante antes.
+ * Cuánto tiene que quedar para que valga la pena otro intento: lo que tarda
+ * Gemini en contestar una nota, más anotarla y agendarla, antes de que Chat
+ * deje de esperar.
  */
-const MARGEN_REINTENTO_MS = 8000;
+const MARGEN_REINTENTO_MS = 10000;
+
+/**
+ * Cuántos pedidos como máximo. En el nivel gratuito la saturación es
+ * intermitente: en la prueba real un pedido pasó y el siguiente no, así que
+ * insistir unas veces alternando modelos rinde. Sin corte de tiempo, como en
+ * las reuniones, se insiste menos: la próxima corrida vuelve a intentar.
+ */
+const MAX_PEDIDOS_CON_CORTE = 6;
+const MAX_PEDIDOS_SIN_CORTE = 4;
+
+/**
+ * El modelo del intento número n (desde 0): se alternan los disponibles. Da
+ * más chances que insistir con uno solo, porque cada uno tiene su capacidad.
+ */
+function modeloDelIntento(modelos, n) {
+  return modelos[n % modelos.length];
+}
 
 /**
  * Se reintenta si el error es pasajero y queda tiempo. Lo que importa no es
@@ -1119,23 +1137,27 @@ function geminiConUso_(partes, esquema, opciones) {
   const modelo = modelos.principal;
   const restante = function () { return opciones.hasta ? opciones.hasta - Date.now() : undefined; };
 
+  const turno = [modelo].concat(modelos.respaldo ? [modelos.respaldo] : []);
+  const maximo = opciones.hasta ? MAX_PEDIDOS_CON_CORTE : MAX_PEDIDOS_SIN_CORTE;
+
   let r = pedirConAjuste_(modelo, partes, esquema, opciones);
-  if (convieneReintentar(r.getResponseCode(), restante())) {
-    if (modelos.respaldo) {
-      // Otro modelo tiene otra capacidad: probarlo al toque tiene más chance
-      // que esperar a que se desature el primero.
-      const r2 = pedirConAjuste_(modelos.respaldo, partes, esquema, opciones);
-      if (r2.getResponseCode() === 200) {
-        r = r2;
-      } else {
-        // Si el respaldo tampoco anda, o no existe, la persona igual recibe el
-        // aviso de saturación, nunca un error técnico del respaldo.
-        console.error('El respaldo ' + modelos.respaldo + ' tampoco respondió (' + r2.getResponseCode() + '): ' +
-          r2.getContentText().slice(0, 200));
-      }
-    } else {
-      Utilities.sleep(3000);
-      r = pedirConAjuste_(modelo, partes, esquema, opciones);
+  for (let n = 1; n < maximo && turno.length && convieneReintentar(r.getResponseCode(), restante()); n++) {
+    // Probados todos una vez, se espera un poco antes de la vuelta siguiente.
+    if (n >= turno.length) Utilities.sleep(1500);
+    const siguiente = modeloDelIntento(turno, n);
+    const r2 = pedirConAjuste_(siguiente, partes, esquema, opciones);
+    // Contestó, o se llegó al límite de pedidos: insistir ahí solo lo empeora.
+    if (r2.getResponseCode() === 200 || r2.getResponseCode() === 429) {
+      r = r2;
+      break;
+    }
+    if (!esErrorPasajero(r2.getResponseCode())) {
+      // Un respaldo que no existe o rechaza el pedido se saca de la vuelta: la
+      // persona igual recibe el aviso de saturación, nunca un error técnico
+      // del respaldo.
+      console.error('El respaldo ' + siguiente + ' no sirve (' + r2.getResponseCode() + '): ' +
+        r2.getContentText().slice(0, 200));
+      turno.splice(turno.indexOf(siguiente), 1);
     }
   }
 

@@ -258,6 +258,32 @@ describe('conversación', () => {
     expect(g.pedidosGemini.at(-1)!.url).toContain('models/gemini-3.6-flash:')
   })
 
+  it('con saturación intermitente, alterna los modelos hasta que uno contesta', () => {
+    // Lo que pasó en el piloto: un pedido pasa y el siguiente no.
+    let rechazos = 3
+    const g = instalado({
+      nota: { intencion: 'pendientes', respuesta: '', tareas: [] },
+      fallaGemini: (t: string) => (t === 'nota' && rechazos-- > 0 ? 503 : undefined),
+    })
+    expect(escribir(g, FER, 'anotame algo')).toBe('No tenés nada pendiente.')
+    const modelos = g.pedidosGemini.filter((p) => p.tipo === 'nota').map((p) => p.url.match(/models\/([^:]+)/)![1])
+    expect(modelos).toEqual(['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.6-flash'])
+  })
+
+  it('si sigue saturado, se rinde con un tope y lo dice', () => {
+    const g = instalado({ fallaGemini: (t: string) => (t === 'nota' ? 503 : undefined) })
+    expect(escribir(g, FER, 'anotame algo')).toContain('Gemini está saturado')
+    expect(g.pedidosGemini.filter((p) => p.tipo === 'nota')).toHaveLength(6)
+  })
+
+  it('ante el límite de pedidos deja de insistir, porque insistir lo empeora', () => {
+    const g = instalado({
+      fallaGemini: (t: string, modelo: string) => (t !== 'nota' ? undefined : modelo === 'gemini-3.5-flash-lite' ? 503 : 429),
+    })
+    expect(escribir(g, FER, 'anotame algo')).toContain('límite de pedidos')
+    expect(g.pedidosGemini.filter((p) => p.tipo === 'nota')).toHaveLength(2)
+  })
+
   it('si el respaldo no existe, igual avisa la saturación y no un error técnico', () => {
     const g = instalado({
       modelosRetirados: ['gemini-9-flash'],
