@@ -22,6 +22,10 @@ export interface Guion {
   minutosDeAudio?: number
   /** Si devuelve un número, Gemini responde con ese código de error. */
   fallaGemini?: (tipo: string) => number | undefined
+  /** Modelos que Google ya no ofrece a cuentas nuevas. */
+  modelosRetirados?: string[]
+  /** El modelo rechaza la forma en que se le acota el razonamiento. */
+  rechazaRazonamiento?: boolean
 }
 
 export function crearGoogle(opciones: { ahora: string; guion?: Guion }) {
@@ -286,6 +290,13 @@ export function crearGoogle(opciones: { ahora: string; guion?: Guion }) {
         const cuerpo = JSON.parse(o.payload)
         const tipo = tipoDePedido(cuerpo)
         pedidosGemini.push({ tipo, cuerpo, claveEnEncabezado, url })
+        const modelo = url.match(/models\/([^:]+):/)![1]
+        if (guion.modelosRetirados?.includes(modelo)) {
+          return respuesta(404, { error: { code: 404, status: 'NOT_FOUND', message: `This model models/${modelo} is no longer available to new users. Please update your code to use models/gemini-3.6-flash for the latest features and improvements.` } })
+        }
+        if (guion.rechazaRazonamiento && cuerpo.generationConfig.thinkingConfig) {
+          return respuesta(400, { error: { code: 400, status: 'INVALID_ARGUMENT', message: 'Thinking level is not supported for this model.' } })
+        }
         const falla = guion.fallaGemini?.(tipo)
         if (falla) return respuesta(falla, { error: { message: 'falla simulada' } })
         const salida =

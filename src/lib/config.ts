@@ -26,7 +26,7 @@ export const config = {
   transcriptor: texto('TRANSCRIBER', 'mock'),
   resumidor: texto('SUMMARIZER', 'mock'),
   geminiKey: texto('GEMINI_API_KEY'),
-  geminiModelo: texto('GEMINI_MODEL', 'gemini-2.5-flash'),
+  geminiModelo: texto('GEMINI_MODEL', 'gemini-3.6-flash'),
   deepgramKey: texto('DEEPGRAM_API_KEY'),
   assemblyaiKey: texto('ASSEMBLYAI_API_KEY'),
   destino: texto('UPLOADER', 'mock'),

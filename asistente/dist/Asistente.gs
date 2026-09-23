@@ -13,13 +13,14 @@
  * así la clave de Gemini nunca queda escrita en un archivo.
  *
  *   GEMINI_API_KEY   obligatoria. La clave de aistudio.google.com.
- *   GEMINI_MODEL     opcional. Por defecto gemini-2.5-flash.
+ *   GEMINI_MODEL     opcional. Por defecto gemini-3.6-flash. Si Google retira un
+ *                    modelo, el error dice cuál poner acá.
  *   CARPETA_ID       la completa instalar().
  *   BASE_ID          la completa instalar().
  */
 
 const ZONA = 'America/Asuncion';
-const MODELO_POR_DEFECTO = 'gemini-2.5-flash';
+const MODELO_POR_DEFECTO = 'gemini-3.6-flash';
 
 /**
  * Hasta este tamaño un audio es una nota de voz y se contesta en el momento.
@@ -53,6 +54,43 @@ function hoy_() {
 
 function ahora_() {
   return Utilities.formatDate(new Date(), ZONA, 'yyyy-MM-dd HH:mm');
+}
+
+// ===== Modelos.js =====
+
+/**
+ * Reglas sobre los modelos de Gemini que no dependen de Google Apps Script, para
+ * poder probarlas afuera.
+ */
+
+/**
+ * Cuánto se deja "pensar" al modelo antes de contestar. Importa porque Apps
+ * Script corta cada pedido a los 60 segundos y Chat espera 30: un razonamiento
+ * sin tope puede gastarse ese tiempo solo.
+ *
+ * Cada familia lo regula distinto. La 2.5 Flash acepta un presupuesto en
+ * unidades; la 3 en adelante, un nivel. A un modelo que no se conoce no se le
+ * manda nada, para no provocar un error.
+ *
+ * @param {number|undefined} presupuesto 0 para tareas mecánicas como
+ *   transcribir; más para lo que requiere criterio, como una minuta.
+ */
+function configRazonamiento(modelo, presupuesto) {
+  if (presupuesto === undefined || presupuesto === null) return null;
+  if (/^gemini-2\.5-flash/.test(modelo)) return { thinkingBudget: presupuesto };
+  if (/^gemini-([3-9]|\d{2,})/.test(modelo)) return { thinkingLevel: 'low' };
+  return null;
+}
+
+/**
+ * Google retira modelos cada tanto, y cuando lo hace el error dice cuál usar.
+ * Se traduce a qué tocar, para que no haga falta cambiar código.
+ */
+function mensajeModeloRetirado(modelo, cuerpo) {
+  const sugerido = (String(cuerpo).match(/use (?:models\/)?(gemini-[\w.-]*[\w])/i) || [])[1];
+  return 'Google retiró el modelo ' + modelo + '. ' + (sugerido
+    ? 'En Propiedades del script, poné GEMINI_MODEL = ' + sugerido + ' y volvé a probar.'
+    : 'En Propiedades del script, cambiá GEMINI_MODEL por un modelo vigente.');
 }
 
 // ===== Texto.js =====
@@ -844,24 +882,24 @@ function geminiConUso_(partes, esquema, opciones) {
     temperature: 0.2,
   };
   if (opciones.maxTokens) generacion.maxOutputTokens = opciones.maxTokens;
-  // Apps Script corta los pedidos a los 60 segundos, y el razonamiento sin tope
-  // puede solo gastarse ese minuto. Se acota en la familia 2.5 Flash, que es la
-  // que admite el parámetro; en otros modelos no se manda, para no provocar un error.
-  if (opciones.razonamiento !== undefined && /^gemini-2\.5-flash/.test(modelo)) {
-    generacion.thinkingConfig = { thinkingBudget: opciones.razonamiento };
+  const razonamiento = configRazonamiento(modelo, opciones.razonamiento);
+  if (razonamiento) generacion.thinkingConfig = razonamiento;
+
+  let r = pedirGemini_(modelo, partes, generacion);
+  // Si el modelo no acepta cómo se le acotó el razonamiento, se pide de nuevo
+  // sin acotarlo: más lento, pero contesta.
+  if (r.getResponseCode() === 400 && generacion.thinkingConfig && /thinking/i.test(r.getContentText())) {
+    delete generacion.thinkingConfig;
+    r = pedirGemini_(modelo, partes, generacion);
   }
 
-  const r = UrlFetchApp.fetch(GEMINI + '/v1beta/models/' + modelo + ':generateContent', {
-    method: 'post',
-    contentType: 'application/json',
-    headers: { 'x-goog-api-key': claveGemini_() },
-    payload: JSON.stringify({ contents: [{ role: 'user', parts: partes }], generationConfig: generacion }),
-    muteHttpExceptions: true,
-  });
   const codigo = r.getResponseCode();
   const cuerpo = r.getContentText();
   if (codigo === 429) {
     throw new Error('Gemini llegó al límite de pedidos del nivel gratuito. Probá de nuevo en un rato.');
+  }
+  if (codigo === 404 && /no longer available|not found/i.test(cuerpo)) {
+    throw new Error(mensajeModeloRetirado(modelo, cuerpo));
   }
   if (codigo !== 200) throw new Error('Gemini respondió ' + codigo + ': ' + cuerpo.slice(0, 400));
 
@@ -872,10 +910,21 @@ function geminiConUso_(partes, esquema, opciones) {
     throw new Error('La respuesta no entró en el límite de Gemini. Si es una reunión, probá con una más corta.');
   }
   const texto = ((candidato.content || {}).parts || [])
+    .filter(function (p) { return !p.thought; })
     .map(function (p) { return p.text || ''; })
     .join('');
   if (!texto) throw new Error('Gemini devolvió una respuesta vacía (' + candidato.finishReason + ').');
   return { datos: JSON.parse(texto), uso: datos.usageMetadata || {} };
+}
+
+function pedirGemini_(modelo, partes, generacion) {
+  return UrlFetchApp.fetch(GEMINI + '/v1beta/models/' + modelo + ':generateContent', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { 'x-goog-api-key': claveGemini_() },
+    payload: JSON.stringify({ contents: [{ role: 'user', parts: partes }], generationConfig: generacion }),
+    muteHttpExceptions: true,
+  });
 }
 
 /** Un audio chico va dentro del mismo pedido: una sola llamada, respuesta inmediata. */

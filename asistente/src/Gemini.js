@@ -34,24 +34,24 @@ function geminiConUso_(partes, esquema, opciones) {
     temperature: 0.2,
   };
   if (opciones.maxTokens) generacion.maxOutputTokens = opciones.maxTokens;
-  // Apps Script corta los pedidos a los 60 segundos, y el razonamiento sin tope
-  // puede solo gastarse ese minuto. Se acota en la familia 2.5 Flash, que es la
-  // que admite el parámetro; en otros modelos no se manda, para no provocar un error.
-  if (opciones.razonamiento !== undefined && /^gemini-2\.5-flash/.test(modelo)) {
-    generacion.thinkingConfig = { thinkingBudget: opciones.razonamiento };
+  const razonamiento = configRazonamiento(modelo, opciones.razonamiento);
+  if (razonamiento) generacion.thinkingConfig = razonamiento;
+
+  let r = pedirGemini_(modelo, partes, generacion);
+  // Si el modelo no acepta cómo se le acotó el razonamiento, se pide de nuevo
+  // sin acotarlo: más lento, pero contesta.
+  if (r.getResponseCode() === 400 && generacion.thinkingConfig && /thinking/i.test(r.getContentText())) {
+    delete generacion.thinkingConfig;
+    r = pedirGemini_(modelo, partes, generacion);
   }
 
-  const r = UrlFetchApp.fetch(GEMINI + '/v1beta/models/' + modelo + ':generateContent', {
-    method: 'post',
-    contentType: 'application/json',
-    headers: { 'x-goog-api-key': claveGemini_() },
-    payload: JSON.stringify({ contents: [{ role: 'user', parts: partes }], generationConfig: generacion }),
-    muteHttpExceptions: true,
-  });
   const codigo = r.getResponseCode();
   const cuerpo = r.getContentText();
   if (codigo === 429) {
     throw new Error('Gemini llegó al límite de pedidos del nivel gratuito. Probá de nuevo en un rato.');
+  }
+  if (codigo === 404 && /no longer available|not found/i.test(cuerpo)) {
+    throw new Error(mensajeModeloRetirado(modelo, cuerpo));
   }
   if (codigo !== 200) throw new Error('Gemini respondió ' + codigo + ': ' + cuerpo.slice(0, 400));
 
@@ -62,10 +62,21 @@ function geminiConUso_(partes, esquema, opciones) {
     throw new Error('La respuesta no entró en el límite de Gemini. Si es una reunión, probá con una más corta.');
   }
   const texto = ((candidato.content || {}).parts || [])
+    .filter(function (p) { return !p.thought; })
     .map(function (p) { return p.text || ''; })
     .join('');
   if (!texto) throw new Error('Gemini devolvió una respuesta vacía (' + candidato.finishReason + ').');
   return { datos: JSON.parse(texto), uso: datos.usageMetadata || {} };
+}
+
+function pedirGemini_(modelo, partes, generacion) {
+  return UrlFetchApp.fetch(GEMINI + '/v1beta/models/' + modelo + ':generateContent', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { 'x-goog-api-key': claveGemini_() },
+    payload: JSON.stringify({ contents: [{ role: 'user', parts: partes }], generationConfig: generacion }),
+    muteHttpExceptions: true,
+  });
 }
 
 /** Un audio chico va dentro del mismo pedido: una sola llamada, respuesta inmediata. */

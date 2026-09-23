@@ -60,6 +60,33 @@ describe('instalar', () => {
     expect(() => g.llamar('instalar')).toThrow(/GEMINI_API_KEY/)
   })
 
+  it('si Google retiró el modelo, dice exactamente qué propiedad cambiar', () => {
+    const g = crearGoogle({ ahora: AHORA, guion: { modelosRetirados: ['gemini-2.5-flash'] } })
+    g.props.set('GEMINI_API_KEY', 'AQ.x')
+    g.props.set('GEMINI_MODEL', 'gemini-2.5-flash')
+    expect(() => g.llamar('instalar')).toThrow('poné GEMINI_MODEL = gemini-3.6-flash')
+    // Con la propiedad corregida, se instala sin tocar el código.
+    g.props.set('GEMINI_MODEL', 'gemini-3.6-flash')
+    expect(() => g.llamar('instalar')).not.toThrow()
+  })
+
+  it('usa el modelo que diga la propiedad, y le acota el razonamiento a su manera', () => {
+    const g = instalado({ nota: { intencion: 'pendientes', respuesta: '', tareas: [] } })
+    g.props.set('GEMINI_MODEL', 'gemini-2.5-flash')
+    escribir(g, FER, 'anotame algo')
+    const pedido = g.pedidosGemini.at(-1)!
+    expect(pedido.url).toContain('models/gemini-2.5-flash:')
+    expect(pedido.cuerpo.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 512 })
+  })
+
+  it('si el modelo no acepta cómo se acota el razonamiento, pide de nuevo sin acotarlo', () => {
+    const g = instalado({ rechazaRazonamiento: true, nota: { intencion: 'pendientes', respuesta: '', tareas: [] } })
+    expect(escribir(g, FER, 'anotame algo')).toBe('No tenés nada pendiente.')
+    const ultimos = g.pedidosGemini.slice(-2)
+    expect(ultimos[0].cuerpo.generationConfig.thinkingConfig).toBeTruthy()
+    expect(ultimos[1].cuerpo.generationConfig.thinkingConfig).toBeUndefined()
+  })
+
   it('manda la clave en un encabezado, nunca en la dirección', () => {
     const g = instalado()
     expect(g.pedidosGemini.every((p) => p.claveEnEncabezado && !p.url.includes('key='))).toBe(true)
@@ -252,7 +279,9 @@ describe('reuniones', () => {
     const pedido = g.pedidosGemini.find((p) => p.tipo === 'minuta')!
     expect(pedido.cuerpo.contents[0].parts[0].file_data.file_uri).toContain('files/abc')
     expect(pedido.cuerpo.contents[0].parts[1].text).toContain('reunión con Diana')
-    expect(pedido.cuerpo.generationConfig.thinkingConfig.thinkingBudget).toBe(1024)
+    // Con el modelo por defecto, el razonamiento se acota por nivel.
+    expect(pedido.url).toContain('models/gemini-3.6-flash:')
+    expect(pedido.cuerpo.generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'low' })
 
     expect(doc(g).hijos[0].texto).toBe('Seguimiento comercial')
     expect(doc(g).texto()).toContain('Fernando Méndez (Marketing)')
@@ -283,7 +312,7 @@ describe('reuniones', () => {
 
     const tramos = g.pedidosGemini.filter((p) => p.tipo === 'tramo')
     expect(tramos).toHaveLength(3)
-    expect(tramos[0].cuerpo.generationConfig.thinkingConfig.thinkingBudget).toBe(0)
+    expect(tramos[0].cuerpo.generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'low' })
     // A cada tramo se le pasan los nombres de quienes estuvieron.
     expect(tramos[0].cuerpo.contents[0].parts[1].text).toContain('Fernando Méndez, Diana Valiente')
 

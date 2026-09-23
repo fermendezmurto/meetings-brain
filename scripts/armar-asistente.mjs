@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url'
 const raiz = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'asistente')
 
 export const ORDEN = [
-  'Config.js', 'Texto.js', 'Fechas.js', 'Intencion.js', 'Eventos.js', 'Prompts.js',
+  'Config.js', 'Modelos.js', 'Texto.js', 'Fechas.js', 'Intencion.js', 'Eventos.js', 'Prompts.js',
   'Formato.js', 'Base.js', 'Gemini.js', 'Avisos.js', 'Chat.js', 'Reuniones.js', 'Instalar.js',
 ]
 

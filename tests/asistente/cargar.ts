@@ -16,7 +16,7 @@ export function cargar(...archivos: string[]): Record<string, any> {
   // exponen a mano los nombres que las pruebas necesitan.
   vm.runInContext(
     `${codigo}
-     this.__exp = { normalizarNombre, buscarPersona, formatearPlazo, fechaParaElModelo,
+     this.__exp = { configRazonamiento, mensajeModeloRetirado, normalizarNombre, buscarPersona, formatearPlazo, fechaParaElModelo,
        esFechaIso, interpretarComando,
        ${archivos.includes('Prompts.js') ? 'promptNota, promptMinuta, promptTramo, marcaDeTiempo, minutosDeAudio, ESQUEMA_NOTA, ESQUEMA_MINUTA, ESQUEMA_TRAMO,' : ''}
        ${archivos.includes('Formato.js') ? 'listarPendientes, listarPedidos, confirmarAnotadas, lineaTarea, reloj, renderizarTurnos, seccionesMinuta, textoBienvenida,' : ''}
@@ -26,4 +26,4 @@ export function cargar(...archivos: string[]): Record<string, any> {
   return (contexto as any).__exp
 }
 
-export const TODOS = ['Texto.js', 'Fechas.js', 'Intencion.js', 'Prompts.js', 'Formato.js']
+export const TODOS = ['Modelos.js', 'Texto.js', 'Fechas.js', 'Intencion.js', 'Prompts.js', 'Formato.js']

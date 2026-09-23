@@ -4,13 +4,14 @@
  * así la clave de Gemini nunca queda escrita en un archivo.
  *
  *   GEMINI_API_KEY   obligatoria. La clave de aistudio.google.com.
- *   GEMINI_MODEL     opcional. Por defecto gemini-2.5-flash.
+ *   GEMINI_MODEL     opcional. Por defecto gemini-3.6-flash. Si Google retira un
+ *                    modelo, el error dice cuál poner acá.
  *   CARPETA_ID       la completa instalar().
  *   BASE_ID          la completa instalar().
  */
 
 const ZONA = 'America/Asuncion';
-const MODELO_POR_DEFECTO = 'gemini-2.5-flash';
+const MODELO_POR_DEFECTO = 'gemini-3.6-flash';
 
 /**
  * Hasta este tamaño un audio es una nota de voz y se contesta en el momento.
