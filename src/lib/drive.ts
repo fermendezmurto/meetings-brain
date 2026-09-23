@@ -1,4 +1,5 @@
-import { promises as fs } from 'node:fs'
+import { promises as fs, createReadStream } from 'node:fs'
+import { Readable } from 'node:stream'
 import { config } from './config'
 
 const ARCHIVOS = 'https://www.googleapis.com/drive/v3/files'
@@ -79,22 +80,12 @@ interface Subida {
  * unica forma razonable: un multipart de cien megas se cae y hay que empezar
  * de cero.
  */
-export async function subirArchivo(
+/** Abre la sesion de subida y devuelve la URL donde mandar los bytes. */
+async function iniciarSubida(
   token: string,
-  ruta: string,
   s: Subida,
+  tamanio: number,
 ): Promise<string> {
-  const datos = await fs.readFile(ruta)
-  return subirContenido(token, datos, s)
-}
-
-export async function subirContenido(
-  token: string,
-  datos: Buffer | string,
-  s: Subida,
-): Promise<string> {
-  const cuerpo = typeof datos === 'string' ? Buffer.from(datos, 'utf8') : datos
-
   const metadatos: Record<string, unknown> = { name: s.nombre, parents: [s.padreId] }
   if (s.convertirA) metadatos.mimeType = s.convertirA
 
@@ -106,7 +97,7 @@ export async function subirContenido(
         authorization: `Bearer ${token}`,
         'content-type': 'application/json',
         'X-Upload-Content-Type': s.mimeType,
-        'X-Upload-Content-Length': String(cuerpo.byteLength),
+        'X-Upload-Content-Length': String(tamanio),
       },
       body: JSON.stringify(metadatos),
     },
@@ -115,15 +106,54 @@ export async function subirContenido(
 
   const destino = inicio.headers.get('location')
   if (!destino) throw new Error('Drive no devolvio URL de subida')
+  return destino
+}
 
-  const r = await fetch(destino, {
-    method: 'PUT',
-    headers: { 'content-type': s.mimeType, 'content-length': String(cuerpo.byteLength) },
-    body: new Uint8Array(cuerpo),
-  })
+async function terminarSubida(r: Response): Promise<string> {
   if (!r.ok) throw new Error(`Drive fallo al subir: ${r.status} ${await r.text()}`)
   const { id } = (await r.json()) as { id: string }
   return id
+}
+
+/**
+ * El audio va por streaming y no cargado entero en memoria: una reunion de dos
+ * horas no tiene por que pasar por la RAM del servidor de una sola vez.
+ */
+export async function subirArchivo(
+  token: string,
+  ruta: string,
+  s: Subida,
+): Promise<string> {
+  const { size } = await fs.stat(ruta)
+  const destino = await iniciarSubida(token, s, size)
+
+  return terminarSubida(
+    await fetch(destino, {
+      method: 'PUT',
+      headers: { 'content-type': s.mimeType, 'content-length': String(size) },
+      body: Readable.toWeb(createReadStream(ruta)) as ReadableStream,
+      // @ts-expect-error duplex es parte de fetch en Node pero no del tipo DOM
+      duplex: 'half',
+    }),
+  )
+}
+
+/** Para la transcripcion y la minuta, que son texto y entran en memoria sobradas. */
+export async function subirContenido(
+  token: string,
+  datos: Buffer | string,
+  s: Subida,
+): Promise<string> {
+  const cuerpo = typeof datos === 'string' ? Buffer.from(datos, 'utf8') : datos
+  const destino = await iniciarSubida(token, s, cuerpo.byteLength)
+
+  return terminarSubida(
+    await fetch(destino, {
+      method: 'PUT',
+      headers: { 'content-type': s.mimeType, 'content-length': String(cuerpo.byteLength) },
+      body: new Uint8Array(cuerpo),
+    }),
+  )
 }
 
 /** Da acceso a alguien sobre un archivo o carpeta, sin mandarle correo. */

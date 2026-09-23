@@ -1,0 +1,30 @@
+# Despliegue de un click en Render. Con esto el servicio queda creado ya
+# configurado; solo hay que pegar la clave de Gemini.
+#
+# El plan gratuito NO admite disco persistente: las grabaciones viven mientras
+# el contenedor este vivo y se pierden cuando se duerme o se actualiza. Alcanza
+# de sobra para probar. Para uso real hay que pasar a un plan con disco y
+# agregar aca un bloque "disk" montado en /datos.
+services:
+  - type: web
+    name: reuniones
+    runtime: docker
+    plan: free
+    region: oregon
+    branch: claude/meeting-recording-drive-app-6ugk55
+    healthCheckPath: /
+    envVars:
+      # La unica que hay que cargar a mano: sync false significa que Render la
+      # pide al crear el servicio en vez de guardarla en el repositorio.
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: TRANSCRIBER
+        value: gemini
+      - key: SUMMARIZER
+        value: gemini
+      # mock deja los archivos en el servidor. Se cambia a drive cuando esten
+      # listas las credenciales de Google.
+      - key: UPLOADER
+        value: mock
+      - key: DATA_DIR
+        value: /datos

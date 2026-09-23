@@ -1,4 +1,5 @@
-import { promises as fs } from 'node:fs'
+import { promises as fs, createReadStream } from 'node:fs'
+import { Readable } from 'node:stream'
 import { config } from './config'
 
 const BASE = 'https://generativelanguage.googleapis.com'
@@ -35,6 +36,8 @@ export async function subirArchivo(
   const urlSubida = inicio.headers.get('x-goog-upload-url')
   if (!urlSubida) throw new Error('Gemini no devolvio URL de subida')
 
+  // El audio va por streaming: una reunion larga no tiene por que pasar entera
+  // por la memoria del servidor, que en un plan chico son 512 MB.
   const subida = await fetch(urlSubida, {
     method: 'POST',
     headers: {
@@ -42,7 +45,9 @@ export async function subirArchivo(
       'X-Goog-Upload-Offset': '0',
       'X-Goog-Upload-Command': 'upload, finalize',
     },
-    body: await fs.readFile(ruta),
+    body: Readable.toWeb(createReadStream(ruta)) as ReadableStream,
+    // @ts-expect-error duplex es parte de fetch en Node pero no del tipo DOM
+    duplex: 'half',
   })
   if (!subida.ok) throw new Error(`Gemini fallo al subir: ${await subida.text()}`)
   const { file } = (await subida.json()) as {
