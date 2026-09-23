@@ -10,7 +10,7 @@ function interpretarComando(texto) {
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
-    .replace(/[¿?¡!.]/g, '')
+    .replace(/[¿?¡!.,;:]/g, ' ')
     .replace(/^\//, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -27,8 +27,13 @@ function interpretarComando(texto) {
     return { tipo: 'pedidos' };
   }
 
-  const cierre = t.match(/^(listo|lista|hecho|hecha|cerrar|cerrada|terminado|terminada|ok)\s*(?:la\s+)?#?\s*(\d+)$/);
-  if (cierre) return { tipo: 'cerrar', numero: Number(cierre[2]) };
+  // "listo 3", "listo, la 3", "ya cerré la #3", "terminé la tarea 3" o al revés,
+  // "la 3 está lista". Una frase con más palabras va al modelo.
+  const HECHO = '(?:listo|lista|hecho|hecha|cerrar|cerrada|cerrado|cerre|terminado|terminada|termine|completada|completado|complete|hice|ok)';
+  const NUMERO = '(?:(?:la|el)\\s+)?(?:tarea\\s+)?#?\\s*(\\d+)';
+  const cierre = t.match(new RegExp('^(?:ya\\s+)?' + HECHO + '\\s+' + NUMERO + '$')) ||
+    t.match(new RegExp('^' + NUMERO + '\\s+(?:ya\\s+)?(?:esta\\s+)?' + HECHO + '$'));
+  if (cierre) return { tipo: 'cerrar', numero: Number(cierre[1]) };
 
   return { tipo: 'libre', texto: String(texto).trim() };
 }

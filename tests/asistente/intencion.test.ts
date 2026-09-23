@@ -23,6 +23,13 @@ describe('interpretarComando', () => {
     ['hecho 3', 3],
     ['cerrar la 7', 7],
     ['ok 40', 40],
+    ['Listo, 3', 3],
+    ['listo la #3', 3],
+    ['Ya cerré la 3', 3],
+    ['terminé la tarea 5', 5],
+    ['hice la 8', 8],
+    ['La 3 está lista.', 3],
+    ['#3 hecha', 3],
   ])('"%s" cierra la %i', (texto, numero) => {
     expect(interpretarComando(texto)).toEqual({ tipo: 'cerrar', numero })
   })
