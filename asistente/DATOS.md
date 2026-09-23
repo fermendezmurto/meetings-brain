@@ -47,6 +47,8 @@ Tareas y eventos, una fila cada uno.
 | ID en Calendar | Id del evento en el calendario de quien lo pidió |
 | ID en Google Tasks | Id de la tarea en la lista del responsable |
 | Reunión | `ID` de la reunión de la que salió |
+| Mensaje | `ID` del mensaje de la bandeja del que salió |
+| Cerrada en Tasks | `sí` cuando el cierre ya se reflejó en Google Tasks |
 
 Un **evento** cuyo día ya pasó se considera ocurrido, aunque su estado diga
 `abierta`.
@@ -67,6 +69,22 @@ Un **evento** cuyo día ya pasó se considera ocurrido, aunque su estado diga
 | Participantes | Nombres, separados por coma y espacio |
 
 Las demás columnas son de trabajo interno del procesamiento.
+
+### Hoja Bandeja
+
+Todo lo que llega por Chat pasa primero por acá, antes de que el Asistente
+haga nada con eso. Si la ejecución se corta, o Gemini está saturado, el mensaje
+no se pierde: la tarea automática de cada minuto lo retoma.
+
+| Columna | Contenido |
+|---|---|
+| ID | Identificador del mensaje |
+| Recibido | `AAAA-MM-DD HH:mm` |
+| Quién / Email | Quién lo mandó |
+| Texto | Lo que escribió, si escribió |
+| Audio | Id en Drive de la nota de voz, mientras no se procesa |
+| Estado | `procesando`, `pendiente`, `lista` o `error` |
+| Intentos / Error | Cuántas veces se intentó y por qué falló la última |
 
 ### Hoja Personas
 
@@ -121,5 +139,6 @@ foto del momento de la reunión.
 
 ## Lo que no se guarda
 
-- **El audio de las notas de voz.** Se procesa y se descarta; queda la tarea.
+- **El audio de las notas de voz.** Se guarda en `Asistente / Bandeja` solo hasta
+  procesarlo, y después va a la papelera de Drive; queda la tarea.
 - **Las conversaciones con el Asistente.** Solo queda lo que se anotó.

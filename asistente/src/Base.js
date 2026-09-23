@@ -11,15 +11,19 @@ const HOJAS = {
   // Las columnas nuevas van siempre al final: las filas viejas siguen valiendo.
   tareas: ['N', 'Creada', 'Qué', 'Responsable', 'Email responsable', 'Plazo', 'Estado',
     'Pidió', 'Email pidió', 'Origen', 'Enlace', 'Cerrada', 'Tipo', 'Hora',
-    'ID en Calendar', 'ID en Google Tasks', 'Reunión'],
+    'ID en Calendar', 'ID en Google Tasks', 'Reunión', 'Mensaje', 'Cerrada en Tasks'],
   reuniones: ['ID', 'Recibida', 'Título', 'Grabó', 'Email', 'Nota', 'Carpeta', 'Audio',
     'Tipo', 'Estado', 'Transcripción', 'Minuta', 'Error', 'Intentos', 'Archivo en Gemini',
     'Subido a Gemini', 'Duración (min)', 'Transcripto hasta (min)', 'Participantes',
     'Fallas de transcripción'],
   personas: ['Nombre', 'Email', 'Última vez'],
+  // Todo lo que llega por Chat pasa primero por acá: si la ejecución se corta,
+  // el mensaje no se pierde y la tarea automática lo retoma.
+  bandeja: ['ID', 'Recibido', 'Quién', 'Email', 'Texto', 'Audio', 'Tipo de audio', 'Estado',
+    'Intentos', 'Error', 'Recibido (ms)'],
 };
 
-const NOMBRE_HOJA = { tareas: 'Tareas', reuniones: 'Reuniones', personas: 'Personas' };
+const NOMBRE_HOJA = { tareas: 'Tareas', reuniones: 'Reuniones', personas: 'Personas', bandeja: 'Bandeja' };
 
 /**
  * Abrir la planilla cuesta tiempo, y un mensaje de Chat tiene 30 segundos. Se
@@ -89,10 +93,12 @@ function filaATarea_(f, i) {
     idCalendar: String(f[14]),
     idTasks: String(f[15]),
     reunion: String(f[16]),
+    mensaje: String(f[17]),
+    cerradaEnTasks: String(f[18]) === 'sí',
   };
 }
 
-const COLUMNA_TAREA = { estado: 7, cerrada: 12, idCalendar: 15, idTasks: 16 };
+const COLUMNA_TAREA = { estado: 7, cerrada: 12, idCalendar: 15, idTasks: 16, cerradaEnTasks: 19 };
 
 function actualizarTarea_(t, cambios) {
   const h = hoja_('tareas');
@@ -116,7 +122,7 @@ function agregarTarea_(t) {
       // El apóstrofo le dice a Sheets que es texto, no una fecha ni una hora.
       t.plazo ? "'" + t.plazo : '', 'abierta', t.pidio, (t.emailPidio || '').toLowerCase(),
       t.origen, t.enlace || '', '', t.tipo || 'tarea', t.hora ? "'" + t.hora : '', '', '',
-      t.reunion || '',
+      t.reunion || '', t.mensaje || '', '',
     ]);
     t.numero = numero;
     t.fila = h.getLastRow();
@@ -142,6 +148,11 @@ function pedidosDe_(email) {
   return tareas_().filter(function (t) {
     return t.estado === 'abierta' && t.emailPidio === email && t.emailResponsable !== email && !yaOcurrio(t, hoy);
   });
+}
+
+/** Las tareas que salieron de un mensaje de la bandeja: evitan anotarlo dos veces. */
+function tareasDelMensaje_(id) {
+  return tareas_().filter(function (t) { return t.mensaje === id; });
 }
 
 /** Todas las tareas de una persona, abiertas o no: las necesita la sincronización. */
@@ -170,10 +181,19 @@ function cerrarTarea_(numero, email) {
 
 // ---------- Personas ----------
 
+/**
+ * La lista se lee de la planilla como mucho cada diez minutos: cada lectura
+ * cuesta tiempo, y un mensaje de Chat tiene 30 segundos.
+ */
 function personas_() {
-  return filas_('personas').map(function (f) {
+  const cache = CacheService.getScriptCache();
+  const guardada = cache.get('personas');
+  if (guardada) return JSON.parse(guardada);
+  const lista = filas_('personas').map(function (f) {
     return { nombre: String(f[0]), email: String(f[1]).toLowerCase() };
   }).filter(function (p) { return p.nombre; });
+  cache.put('personas', JSON.stringify(lista), 600);
+  return lista;
 }
 
 /**
@@ -183,6 +203,9 @@ function personas_() {
 function registrarPersona_(nombre, email) {
   if (!nombre || !email) return;
   email = String(email).toLowerCase();
+  // Una vez registrada, no hace falta tocar la planilla en cada mensaje.
+  const cache = CacheService.getScriptCache();
+  if (cache.get('registrada:' + email) === nombre) return;
   conCandado_(function () {
     const h = hoja_('personas');
     const existentes = filas_('personas');
@@ -194,6 +217,8 @@ function registrarPersona_(nombre, email) {
     }
     h.appendRow([nombre, email, ahora_()]);
   });
+  cache.put('registrada:' + email, nombre, 6 * 60 * 60);
+  cache.remove('personas');
 }
 
 // ---------- Reuniones ----------
@@ -248,5 +273,55 @@ function actualizarReunion_(r, cambios) {
   Object.keys(cambios).forEach(function (k) {
     h.getRange(r.fila, COLUMNA_REUNION[k]).setValue(cambios[k]);
     r[k] = cambios[k];
+  });
+}
+
+// ---------- Bandeja ----------
+
+function filaAMensaje_(f, i) {
+  return {
+    fila: i + 2,
+    id: String(f[0]),
+    recibido: String(f[1]),
+    quien: String(f[2]),
+    email: String(f[3]).toLowerCase(),
+    texto: String(f[4]),
+    audioId: String(f[5]),
+    tipoAudio: String(f[6]),
+    estado: String(f[7]),
+    intentos: Number(f[8]) || 0,
+    error: String(f[9]),
+    recibidoMs: Number(f[10]) || 0,
+  };
+}
+
+function bandeja_() {
+  return filas_('bandeja').map(filaAMensaje_);
+}
+
+/** Guarda el mensaje antes de hacer nada con él. */
+function encolarMensaje_(m) {
+  m.id = Utilities.getUuid().slice(0, 8);
+  m.estado = 'procesando';
+  m.intentos = 0;
+  m.recibidoMs = Date.now();
+  conCandado_(function () {
+    const h = hoja_('bandeja');
+    h.appendRow([m.id, ahora_(), m.quien, m.email, m.texto || '', m.audioId || '', m.tipoAudio || '',
+      m.estado, 0, '', m.recibidoMs]);
+    m.fila = h.getLastRow();
+  });
+  // Aviso barato para la tarea automática: hay algo que mirar.
+  PropertiesService.getScriptProperties().setProperty('BANDEJA_PENDIENTE', '1');
+  return m;
+}
+
+const COLUMNA_MENSAJE = { estado: 8, intentos: 9, error: 10 };
+
+function actualizarMensaje_(m, cambios) {
+  const h = hoja_('bandeja');
+  Object.keys(cambios).forEach(function (k) {
+    h.getRange(m.fila, COLUMNA_MENSAJE[k]).setValue(cambios[k]);
+    m[k] = cambios[k];
   });
 }

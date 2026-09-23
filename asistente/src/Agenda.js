@@ -61,3 +61,51 @@ function planDeSincronizacion(suyas, enTasks) {
   });
   return plan;
 }
+
+/** Paraguay está en UTC-3 todo el año desde 2024. */
+const DESFASE_UTC_HORAS = 3;
+
+function dos_(n) {
+  return (n < 10 ? '0' : '') + n;
+}
+
+/**
+ * Un enlace que agrega el evento al calendario de quien lo abre, con un clic.
+ * Es la forma de poner algo en el calendario de otra persona sin tener permiso
+ * sobre su cuenta: el Asistente lo manda por correo cuando no pudo agendarlo él.
+ */
+function enlaceCalendario(t, duracionMinutos) {
+  const p = t.plazo.split('-').map(Number);
+  let fechas;
+  if (esHora(t.hora)) {
+    const h = normalizarHora(t.hora).split(':').map(Number);
+    const inicio = new Date(Date.UTC(p[0], p[1] - 1, p[2], h[0] + DESFASE_UTC_HORAS, h[1]));
+    const fin = new Date(inicio.getTime() + (Number(duracionMinutos) || 60) * 60000);
+    const utc = function (d) {
+      return d.getUTCFullYear() + dos_(d.getUTCMonth() + 1) + dos_(d.getUTCDate()) + 'T' +
+        dos_(d.getUTCHours()) + dos_(d.getUTCMinutes()) + '00Z';
+    };
+    fechas = utc(inicio) + '/' + utc(fin);
+  } else {
+    const siguiente = new Date(Date.UTC(p[0], p[1] - 1, p[2] + 1));
+    fechas = t.plazo.replace(/-/g, '') + '/' + siguiente.getUTCFullYear() +
+      dos_(siguiente.getUTCMonth() + 1) + dos_(siguiente.getUTCDate());
+  }
+  return 'https://calendar.google.com/calendar/render?action=TEMPLATE' +
+    '&text=' + encodeURIComponent(t.que) +
+    '&dates=' + fechas +
+    '&details=' + encodeURIComponent('Anotado por el Asistente (#' + t.numero + ').');
+}
+
+/**
+ * Cuánto se espera a que termine un mensaje que se estaba atendiendo en Chat.
+ * Google corta esas ejecuciones pasados unos 30 segundos; si a los dos minutos
+ * sigue "procesando", la ejecución murió y hay que retomarlo.
+ */
+const ABANDONO_MS = 2 * 60 * 1000;
+
+/** Si la tarea automática tiene que ocuparse de este mensaje de la bandeja. */
+function hayQueRetomar(m, ahoraMs) {
+  if (m.estado === 'pendiente') return true;
+  return m.estado === 'procesando' && ahoraMs - m.recibidoMs > ABANDONO_MS;
+}

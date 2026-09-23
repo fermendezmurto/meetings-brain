@@ -94,3 +94,38 @@ describe('datosDeMinuta', () => {
     expect(d.participantes).toEqual([{ nombre: 'Diana', rol: '' }])
   })
 })
+
+describe('enlaceCalendario', () => {
+  it('arma un evento con hora en UTC: Paraguay está en UTC-3', () => {
+    const url = f.enlaceCalendario({ numero: 4, que: 'Reunión de pricing', plazo: '2026-09-26', hora: '13:00' }, 90)
+    expect(url).toContain('text=Reuni%C3%B3n%20de%20pricing')
+    expect(url).toContain('dates=20260926T160000Z/20260926T173000Z')
+  })
+
+  it('una hora de la noche puede caer al día siguiente en UTC', () => {
+    expect(f.enlaceCalendario({ numero: 1, que: 'x', plazo: '2026-12-31', hora: '22:30' }))
+      .toContain('dates=20270101T013000Z/20270101T023000Z')
+  })
+
+  it('sin hora es un evento de todo el día', () => {
+    expect(f.enlaceCalendario({ numero: 1, que: 'Visita', plazo: '2026-09-30', hora: '' }))
+      .toContain('dates=20260930/20261001')
+  })
+})
+
+describe('hayQueRetomar', () => {
+  const ahora = 1_000_000_000
+  it('lo que quedó pendiente se retoma', () => {
+    expect(f.hayQueRetomar({ estado: 'pendiente', recibidoMs: ahora }, ahora)).toBe(true)
+  })
+
+  it('lo que se está procesando se deja terminar, salvo que pasen dos minutos', () => {
+    expect(f.hayQueRetomar({ estado: 'procesando', recibidoMs: ahora - 60_000 }, ahora)).toBe(false)
+    expect(f.hayQueRetomar({ estado: 'procesando', recibidoMs: ahora - 180_000 }, ahora)).toBe(true)
+  })
+
+  it('lo terminado o lo que ya dio error no se toca', () => {
+    expect(f.hayQueRetomar({ estado: 'lista', recibidoMs: 0 }, ahora)).toBe(false)
+    expect(f.hayQueRetomar({ estado: 'error', recibidoMs: 0 }, ahora)).toBe(false)
+  })
+})

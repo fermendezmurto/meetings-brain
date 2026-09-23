@@ -36,7 +36,7 @@ export interface Guion {
 }
 
 export function crearGoogle(opciones: { ahora: string; guion?: Guion }) {
-  const ahora = new Date(opciones.ahora).getTime()
+  let ahora = new Date(opciones.ahora).getTime()
   const guion: Guion = opciones.guion ?? {}
 
   // --- Registro de lo que pasó, para que las pruebas lo revisen ---
@@ -60,6 +60,24 @@ export function crearGoogle(opciones: { ahora: string; guion?: Guion }) {
   const APAGADA = (api: string) => new Error(`${api} has not been used in project 601153146863 before or it is disabled.`)
 
   const Session = { getEffectiveUser: () => ({ getEmail: () => usuario }) }
+
+  const caches = new Map<string, Map<string, { valor: string; vence: number }>>()
+  const cache = (clave: string) => {
+    if (!caches.has(clave)) caches.set(clave, new Map())
+    const m = caches.get(clave)!
+    return {
+      get: (k: string) => {
+        const e = m.get(k)
+        return e && e.vence > ahora ? e.valor : null
+      },
+      put: (k: string, v: string, segundos = 600) => { m.set(k, { valor: v, vence: ahora + segundos * 1000 }) },
+      remove: (k: string) => { m.delete(k) },
+    }
+  }
+  const CacheService = {
+    getScriptCache: () => cache('script'),
+    getUserCache: () => cache('usuario:' + usuario),
+  }
 
   const CalendarApp = {
     getDefaultCalendar: () => {
@@ -156,6 +174,8 @@ export function crearGoogle(opciones: { ahora: string; guion?: Guion }) {
       getMimeType: () => a.blob.tipo,
       moveTo: (c: any) => { a.carpeta = c.getId(); return a },
       setContent: (t: string) => { a.blob = new Blob(Buffer.from(t, 'utf8'), a.blob.tipo, a.blob.nombre); return a },
+      enPapelera: false,
+      setTrashed: (v: boolean) => { a.enPapelera = v; return a },
     }
     archivos.set(id, a)
     return a
@@ -447,16 +467,17 @@ export function crearGoogle(opciones: { ahora: string; guion?: Guion }) {
       },
     },
     MailApp: { sendEmail: (m: any) => { correos.push(m) } },
-    SpreadsheetApp, DriveApp, DocumentApp, UrlFetchApp, Session, CalendarApp, Tasks,
+    SpreadsheetApp, DriveApp, DocumentApp, UrlFetchApp, Session, CalendarApp, Tasks, CacheService,
   }
 
   contexto = vm.createContext(globales)
   // El reloj del script queda fijo: "hoy" es siempre el mismo día en las pruebas.
+  contexto.__ahora = () => ahora
   vm.runInContext(
     `const __Real = Date;
      class __Fija extends __Real {
-       constructor(...a) { if (a.length) { super(...a) } else { super(${ahora}) } }
-       static now() { return ${ahora} }
+       constructor(...a) { if (a.length) { super(...a) } else { super(__ahora()) } }
+       static now() { return __ahora() }
      }
      Date = __Fija;`,
     contexto,
@@ -480,6 +501,10 @@ export function crearGoogle(opciones: { ahora: string; guion?: Guion }) {
     },
     eventos,
     DUENIO,
+    /** Adelanta el reloj del script. */
+    avanzar(ms: number) {
+      ahora += ms
+    },
     /** La lista de Google Tasks de una persona. */
     tasksDe: (email: string) => [...listaDe(email).values()],
     /** Corre algo con la cuenta de otra persona, como lo hace Chat. */

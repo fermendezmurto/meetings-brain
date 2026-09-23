@@ -73,26 +73,39 @@ function completarEnTasks_(id) {
 
 /**
  * Deja la base y el Google Tasks de la persona diciendo lo mismo, en los dos
- * sentidos: crea en su lista lo que tiene pendiente, cierra en la base lo que
- * marcó como hecho allá, y marca como hecho allá lo que se cerró por Chat.
+ * sentidos: crea en su lista lo que tiene pendiente, marca como hecho allá lo
+ * que se cerró por Chat, y cierra en la base lo que marcó como hecho allá.
+ *
+ * Lo último obliga a leer su lista entera, y eso cuesta tiempo. Por eso se hace
+ * como mucho cada diez minutos, salvo que la persona pida sus pendientes, que
+ * es cuando la lista tiene que estar al día. Lo demás se sabe mirando la base.
  *
  * Nunca rompe: si Google Tasks falla, el Asistente sigue funcionando y se
  * vuelve a intentar en la próxima conversación.
  */
-function sincronizarGoogleTasks_(email) {
+function sincronizarGoogleTasks_(email, forzar) {
   try {
     const suyas = tareasDeResponsable_(email).filter(function (t) { return t.tipo !== 'evento'; });
-    const hayQueCrear = suyas.some(function (t) { return t.estado === 'abierta' && !t.idTasks; });
-    const hayQueMirar = suyas.some(function (t) { return t.idTasks; });
-    if (!hayQueCrear && !hayQueMirar) return;
 
-    const plan = planDeSincronizacion(suyas, hayQueMirar ? estadoEnTasks_() : {});
-    plan.crear.forEach(function (t) { actualizarTarea_(t, { idTasks: crearGoogleTask_(t) }); });
-    plan.completarEnTasks.forEach(function (t) { completarEnTasks_(t.idTasks); });
+    suyas.filter(function (t) { return t.estado === 'abierta' && !t.idTasks; }).forEach(function (t) {
+      actualizarTarea_(t, { idTasks: crearGoogleTask_(t) });
+    });
+    suyas.filter(function (t) { return t.estado !== 'abierta' && t.idTasks && !t.cerradaEnTasks; }).forEach(function (t) {
+      completarEnTasks_(t.idTasks);
+      actualizarTarea_(t, { cerradaEnTasks: 'sí' });
+    });
+
+    const abiertasEnTasks = suyas.filter(function (t) { return t.estado === 'abierta' && t.idTasks; });
+    if (!abiertasEnTasks.length) return;
+    const cache = CacheService.getUserCache();
+    if (!forzar && cache.get('tasks-al-dia')) return;
+
+    const plan = planDeSincronizacion(abiertasEnTasks, estadoEnTasks_());
     plan.cerrarEnBase.forEach(function (t) {
-      actualizarTarea_(t, { estado: 'cerrada', cerrada: ahora_() });
+      actualizarTarea_(t, { estado: 'cerrada', cerrada: ahora_(), cerradaEnTasks: 'sí' });
       if (t.emailPidio && t.emailPidio !== email) avisarCierre_(t, { nombre: t.responsable });
     });
+    cache.put('tasks-al-dia', '1', 600);
   } catch (err) {
     console.error('Sincronización con Google Tasks de ' + email + ': ' + (err && err.stack ? err.stack : err));
   }

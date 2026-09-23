@@ -203,7 +203,8 @@ tareas:** así la conoce.
 | "Asistente no responde", y en **Ejecuciones** no aparece ningún `onMessage` | Chat no está llegando al código. Revisá que `appsscript.json` sea el de [`dist/appsscript.json`](dist/appsscript.json) (tiene que tener una sección `addOns`), y el ID de implementación y los nombres de las funciones en la configuración de Chat. |
 | "Permission denied while enabling APIs" | Habilitá a mano las cuatro APIs del paso 2c y volvé a correr instalar. |
 | "Google retiró el modelo…" | El mismo mensaje dice qué valor poner en la propiedad `GEMINI_MODEL`. |
-| "Gemini está saturado en este momento" | Es de Google y suele durar minutos; en el nivel gratuito pasa más seguido. Antes de decirlo, el Asistente ya probó con los dos modelos (ver *Qué modelos usa*). Con las reuniones sigue reintentando solo durante una hora. |
+| "Lo recibí, pero Gemini está lento en este momento" | No se perdió nada: el mensaje quedó en la bandeja y en un par de minutos llega la confirmación por correo. Pasa más seguido en el nivel gratuito. Si en media hora no se pudo, llega un correo diciéndolo. |
+| "Asistente no responde" | Google cortó la ejecución antes de los 30 segundos. El mensaje ya estaba guardado: a los dos minutos se retoma solo y llega la confirmación por correo. **No hace falta repetirlo.** |
 
 Para ver qué hizo el Asistente por dentro: en script.google.com, menú de la
 izquierda → **Ejecuciones**.
@@ -226,6 +227,23 @@ izquierda → **Ejecuciones**.
   marca como hecha en Google Tasks.
 - Borrar una tarea de Google Tasks no la cierra: sigue en el resumen de la
   mañana hasta que alguien escriba *listo*.
+
+## Cuando Gemini está lento
+
+Chat espera la respuesta como mucho 30 segundos. Por eso:
+
+1. **Todo mensaje se guarda primero** en la hoja Bandeja, antes de hacer nada.
+2. Se intenta resolver en el momento, con un tope de unos 22 segundos.
+3. Si no llega, se contesta enseguida que se termina después, y la tarea
+   automática `procesarBandeja` (cada minuto) lo retoma sin apuro. La
+   confirmación llega por correo.
+4. Si Google cortó la ejecución a la mitad, a los dos minutos se retoma, sin
+   anotar dos veces lo que ya se había anotado.
+
+Lo que se termina fuera de Chat corre con la cuenta de quien instaló, así que
+no puede tocar el calendario ni el Google Tasks de otra persona: el correo trae
+un enlace para agregar el evento al calendario con un clic, y las tareas
+aparecen en su Google Tasks la próxima vez que le escribe al Asistente.
 
 ## Qué modelos usa
 

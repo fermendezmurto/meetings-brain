@@ -31,11 +31,11 @@ const VIDA_EN_GEMINI_MS = 40 * 60 * 60 * 1000;
 const AVISO_TRANSCRIPCION = 'La transcripción completa se está armando y aparece acá en los próximos minutos.';
 
 function procesarReuniones() {
-  if (!tomarTurno_()) return;
+  if (!tomarTurno_('PROCESANDO_HASTA')) return;
   try {
     procesarPendientes_();
   } finally {
-    soltarTurno_();
+    soltarTurno_('PROCESANDO_HASTA');
   }
 }
 
@@ -45,21 +45,21 @@ function procesarReuniones() {
  * gente que escribe en Chat quedaría esperando. El turno vence solo, por si una
  * corrida se corta sin soltarlo.
  */
-function tomarTurno_() {
+function tomarTurno_(clave) {
   const candado = LockService.getScriptLock();
   if (!candado.tryLock(5000)) return false;
   try {
     const props = PropertiesService.getScriptProperties();
-    if (Number(props.getProperty('PROCESANDO_HASTA') || 0) > Date.now()) return false;
-    props.setProperty('PROCESANDO_HASTA', String(Date.now() + 7 * 60 * 1000));
+    if (Number(props.getProperty(clave) || 0) > Date.now()) return false;
+    props.setProperty(clave, String(Date.now() + 7 * 60 * 1000));
     return true;
   } finally {
     candado.releaseLock();
   }
 }
 
-function soltarTurno_() {
-  PropertiesService.getScriptProperties().deleteProperty('PROCESANDO_HASTA');
+function soltarTurno_(clave) {
+  PropertiesService.getScriptProperties().deleteProperty(clave);
 }
 
 function procesarPendientes_() {

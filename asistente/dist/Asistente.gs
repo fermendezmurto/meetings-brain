@@ -378,6 +378,54 @@ function planDeSincronizacion(suyas, enTasks) {
   return plan;
 }
 
+/** Paraguay está en UTC-3 todo el año desde 2024. */
+const DESFASE_UTC_HORAS = 3;
+
+function dos_(n) {
+  return (n < 10 ? '0' : '') + n;
+}
+
+/**
+ * Un enlace que agrega el evento al calendario de quien lo abre, con un clic.
+ * Es la forma de poner algo en el calendario de otra persona sin tener permiso
+ * sobre su cuenta: el Asistente lo manda por correo cuando no pudo agendarlo él.
+ */
+function enlaceCalendario(t, duracionMinutos) {
+  const p = t.plazo.split('-').map(Number);
+  let fechas;
+  if (esHora(t.hora)) {
+    const h = normalizarHora(t.hora).split(':').map(Number);
+    const inicio = new Date(Date.UTC(p[0], p[1] - 1, p[2], h[0] + DESFASE_UTC_HORAS, h[1]));
+    const fin = new Date(inicio.getTime() + (Number(duracionMinutos) || 60) * 60000);
+    const utc = function (d) {
+      return d.getUTCFullYear() + dos_(d.getUTCMonth() + 1) + dos_(d.getUTCDate()) + 'T' +
+        dos_(d.getUTCHours()) + dos_(d.getUTCMinutes()) + '00Z';
+    };
+    fechas = utc(inicio) + '/' + utc(fin);
+  } else {
+    const siguiente = new Date(Date.UTC(p[0], p[1] - 1, p[2] + 1));
+    fechas = t.plazo.replace(/-/g, '') + '/' + siguiente.getUTCFullYear() +
+      dos_(siguiente.getUTCMonth() + 1) + dos_(siguiente.getUTCDate());
+  }
+  return 'https://calendar.google.com/calendar/render?action=TEMPLATE' +
+    '&text=' + encodeURIComponent(t.que) +
+    '&dates=' + fechas +
+    '&details=' + encodeURIComponent('Anotado por el Asistente (#' + t.numero + ').');
+}
+
+/**
+ * Cuánto se espera a que termine un mensaje que se estaba atendiendo en Chat.
+ * Google corta esas ejecuciones pasados unos 30 segundos; si a los dos minutos
+ * sigue "procesando", la ejecución murió y hay que retomarlo.
+ */
+const ABANDONO_MS = 2 * 60 * 1000;
+
+/** Si la tarea automática tiene que ocuparse de este mensaje de la bandeja. */
+function hayQueRetomar(m, ahoraMs) {
+  if (m.estado === 'pendiente') return true;
+  return m.estado === 'procesando' && ahoraMs - m.recibidoMs > ABANDONO_MS;
+}
+
 // ===== Intencion.js =====
 
 /**
@@ -861,15 +909,19 @@ const HOJAS = {
   // Las columnas nuevas van siempre al final: las filas viejas siguen valiendo.
   tareas: ['N', 'Creada', 'Qué', 'Responsable', 'Email responsable', 'Plazo', 'Estado',
     'Pidió', 'Email pidió', 'Origen', 'Enlace', 'Cerrada', 'Tipo', 'Hora',
-    'ID en Calendar', 'ID en Google Tasks', 'Reunión'],
+    'ID en Calendar', 'ID en Google Tasks', 'Reunión', 'Mensaje', 'Cerrada en Tasks'],
   reuniones: ['ID', 'Recibida', 'Título', 'Grabó', 'Email', 'Nota', 'Carpeta', 'Audio',
     'Tipo', 'Estado', 'Transcripción', 'Minuta', 'Error', 'Intentos', 'Archivo en Gemini',
     'Subido a Gemini', 'Duración (min)', 'Transcripto hasta (min)', 'Participantes',
     'Fallas de transcripción'],
   personas: ['Nombre', 'Email', 'Última vez'],
+  // Todo lo que llega por Chat pasa primero por acá: si la ejecución se corta,
+  // el mensaje no se pierde y la tarea automática lo retoma.
+  bandeja: ['ID', 'Recibido', 'Quién', 'Email', 'Texto', 'Audio', 'Tipo de audio', 'Estado',
+    'Intentos', 'Error', 'Recibido (ms)'],
 };
 
-const NOMBRE_HOJA = { tareas: 'Tareas', reuniones: 'Reuniones', personas: 'Personas' };
+const NOMBRE_HOJA = { tareas: 'Tareas', reuniones: 'Reuniones', personas: 'Personas', bandeja: 'Bandeja' };
 
 /**
  * Abrir la planilla cuesta tiempo, y un mensaje de Chat tiene 30 segundos. Se
@@ -939,10 +991,12 @@ function filaATarea_(f, i) {
     idCalendar: String(f[14]),
     idTasks: String(f[15]),
     reunion: String(f[16]),
+    mensaje: String(f[17]),
+    cerradaEnTasks: String(f[18]) === 'sí',
   };
 }
 
-const COLUMNA_TAREA = { estado: 7, cerrada: 12, idCalendar: 15, idTasks: 16 };
+const COLUMNA_TAREA = { estado: 7, cerrada: 12, idCalendar: 15, idTasks: 16, cerradaEnTasks: 19 };
 
 function actualizarTarea_(t, cambios) {
   const h = hoja_('tareas');
@@ -966,7 +1020,7 @@ function agregarTarea_(t) {
       // El apóstrofo le dice a Sheets que es texto, no una fecha ni una hora.
       t.plazo ? "'" + t.plazo : '', 'abierta', t.pidio, (t.emailPidio || '').toLowerCase(),
       t.origen, t.enlace || '', '', t.tipo || 'tarea', t.hora ? "'" + t.hora : '', '', '',
-      t.reunion || '',
+      t.reunion || '', t.mensaje || '', '',
     ]);
     t.numero = numero;
     t.fila = h.getLastRow();
@@ -992,6 +1046,11 @@ function pedidosDe_(email) {
   return tareas_().filter(function (t) {
     return t.estado === 'abierta' && t.emailPidio === email && t.emailResponsable !== email && !yaOcurrio(t, hoy);
   });
+}
+
+/** Las tareas que salieron de un mensaje de la bandeja: evitan anotarlo dos veces. */
+function tareasDelMensaje_(id) {
+  return tareas_().filter(function (t) { return t.mensaje === id; });
 }
 
 /** Todas las tareas de una persona, abiertas o no: las necesita la sincronización. */
@@ -1020,10 +1079,19 @@ function cerrarTarea_(numero, email) {
 
 // ---------- Personas ----------
 
+/**
+ * La lista se lee de la planilla como mucho cada diez minutos: cada lectura
+ * cuesta tiempo, y un mensaje de Chat tiene 30 segundos.
+ */
 function personas_() {
-  return filas_('personas').map(function (f) {
+  const cache = CacheService.getScriptCache();
+  const guardada = cache.get('personas');
+  if (guardada) return JSON.parse(guardada);
+  const lista = filas_('personas').map(function (f) {
     return { nombre: String(f[0]), email: String(f[1]).toLowerCase() };
   }).filter(function (p) { return p.nombre; });
+  cache.put('personas', JSON.stringify(lista), 600);
+  return lista;
 }
 
 /**
@@ -1033,6 +1101,9 @@ function personas_() {
 function registrarPersona_(nombre, email) {
   if (!nombre || !email) return;
   email = String(email).toLowerCase();
+  // Una vez registrada, no hace falta tocar la planilla en cada mensaje.
+  const cache = CacheService.getScriptCache();
+  if (cache.get('registrada:' + email) === nombre) return;
   conCandado_(function () {
     const h = hoja_('personas');
     const existentes = filas_('personas');
@@ -1044,6 +1115,8 @@ function registrarPersona_(nombre, email) {
     }
     h.appendRow([nombre, email, ahora_()]);
   });
+  cache.put('registrada:' + email, nombre, 6 * 60 * 60);
+  cache.remove('personas');
 }
 
 // ---------- Reuniones ----------
@@ -1098,6 +1171,56 @@ function actualizarReunion_(r, cambios) {
   Object.keys(cambios).forEach(function (k) {
     h.getRange(r.fila, COLUMNA_REUNION[k]).setValue(cambios[k]);
     r[k] = cambios[k];
+  });
+}
+
+// ---------- Bandeja ----------
+
+function filaAMensaje_(f, i) {
+  return {
+    fila: i + 2,
+    id: String(f[0]),
+    recibido: String(f[1]),
+    quien: String(f[2]),
+    email: String(f[3]).toLowerCase(),
+    texto: String(f[4]),
+    audioId: String(f[5]),
+    tipoAudio: String(f[6]),
+    estado: String(f[7]),
+    intentos: Number(f[8]) || 0,
+    error: String(f[9]),
+    recibidoMs: Number(f[10]) || 0,
+  };
+}
+
+function bandeja_() {
+  return filas_('bandeja').map(filaAMensaje_);
+}
+
+/** Guarda el mensaje antes de hacer nada con él. */
+function encolarMensaje_(m) {
+  m.id = Utilities.getUuid().slice(0, 8);
+  m.estado = 'procesando';
+  m.intentos = 0;
+  m.recibidoMs = Date.now();
+  conCandado_(function () {
+    const h = hoja_('bandeja');
+    h.appendRow([m.id, ahora_(), m.quien, m.email, m.texto || '', m.audioId || '', m.tipoAudio || '',
+      m.estado, 0, '', m.recibidoMs]);
+    m.fila = h.getLastRow();
+  });
+  // Aviso barato para la tarea automática: hay algo que mirar.
+  PropertiesService.getScriptProperties().setProperty('BANDEJA_PENDIENTE', '1');
+  return m;
+}
+
+const COLUMNA_MENSAJE = { estado: 8, intentos: 9, error: 10 };
+
+function actualizarMensaje_(m, cambios) {
+  const h = hoja_('bandeja');
+  Object.keys(cambios).forEach(function (k) {
+    h.getRange(m.fila, COLUMNA_MENSAJE[k]).setValue(cambios[k]);
+    m[k] = cambios[k];
   });
 }
 
@@ -1399,26 +1522,39 @@ function completarEnTasks_(id) {
 
 /**
  * Deja la base y el Google Tasks de la persona diciendo lo mismo, en los dos
- * sentidos: crea en su lista lo que tiene pendiente, cierra en la base lo que
- * marcó como hecho allá, y marca como hecho allá lo que se cerró por Chat.
+ * sentidos: crea en su lista lo que tiene pendiente, marca como hecho allá lo
+ * que se cerró por Chat, y cierra en la base lo que marcó como hecho allá.
+ *
+ * Lo último obliga a leer su lista entera, y eso cuesta tiempo. Por eso se hace
+ * como mucho cada diez minutos, salvo que la persona pida sus pendientes, que
+ * es cuando la lista tiene que estar al día. Lo demás se sabe mirando la base.
  *
  * Nunca rompe: si Google Tasks falla, el Asistente sigue funcionando y se
  * vuelve a intentar en la próxima conversación.
  */
-function sincronizarGoogleTasks_(email) {
+function sincronizarGoogleTasks_(email, forzar) {
   try {
     const suyas = tareasDeResponsable_(email).filter(function (t) { return t.tipo !== 'evento'; });
-    const hayQueCrear = suyas.some(function (t) { return t.estado === 'abierta' && !t.idTasks; });
-    const hayQueMirar = suyas.some(function (t) { return t.idTasks; });
-    if (!hayQueCrear && !hayQueMirar) return;
 
-    const plan = planDeSincronizacion(suyas, hayQueMirar ? estadoEnTasks_() : {});
-    plan.crear.forEach(function (t) { actualizarTarea_(t, { idTasks: crearGoogleTask_(t) }); });
-    plan.completarEnTasks.forEach(function (t) { completarEnTasks_(t.idTasks); });
+    suyas.filter(function (t) { return t.estado === 'abierta' && !t.idTasks; }).forEach(function (t) {
+      actualizarTarea_(t, { idTasks: crearGoogleTask_(t) });
+    });
+    suyas.filter(function (t) { return t.estado !== 'abierta' && t.idTasks && !t.cerradaEnTasks; }).forEach(function (t) {
+      completarEnTasks_(t.idTasks);
+      actualizarTarea_(t, { cerradaEnTasks: 'sí' });
+    });
+
+    const abiertasEnTasks = suyas.filter(function (t) { return t.estado === 'abierta' && t.idTasks; });
+    if (!abiertasEnTasks.length) return;
+    const cache = CacheService.getUserCache();
+    if (!forzar && cache.get('tasks-al-dia')) return;
+
+    const plan = planDeSincronizacion(abiertasEnTasks, estadoEnTasks_());
     plan.cerrarEnBase.forEach(function (t) {
-      actualizarTarea_(t, { estado: 'cerrada', cerrada: ahora_() });
+      actualizarTarea_(t, { estado: 'cerrada', cerrada: ahora_(), cerradaEnTasks: 'sí' });
       if (t.emailPidio && t.emailPidio !== email) avisarCierre_(t, { nombre: t.responsable });
     });
+    cache.put('tasks-al-dia', '1', 600);
   } catch (err) {
     console.error('Sincronización con Google Tasks de ' + email + ': ' + (err && err.stack ? err.stack : err));
   }
@@ -1435,8 +1571,14 @@ function sincronizarGoogleTasks_(email) {
  * reuniones y del resumen de la mañana, con la cuenta de quien instaló.
  */
 
+/**
+ * Saca el negrito y la cursiva de Chat para un correo. Solo las marcas, no
+ * cualquier asterisco o guion bajo: un enlace puede tener los dos.
+ */
 function sinFormatoChat_(texto) {
-  return String(texto).replace(/\*/g, '').replace(/_/g, '');
+  return String(texto)
+    .replace(/\*([^*\n]+)\*/g, '$1')
+    .replace(/(^|\s)_([^_\n]+)_(?=\s|$)/g, '$1$2');
 }
 
 function avisarTarea_(t, origen) {
@@ -1537,6 +1679,41 @@ function avisoMatutino() {
   });
 }
 
+/** La confirmación de una nota que se terminó de procesar fuera de Chat. */
+function avisarNotaProcesada_(m, respuesta) {
+  MailApp.sendEmail({
+    to: m.email,
+    subject: 'Listo: ' + resumenDeNota_(m),
+    name: 'Asistente',
+    body: [
+      'Gemini estaba lento cuando me escribiste (' + m.recibido.slice(11) + '). Ya quedó:',
+      '',
+      sinFormatoChat_(respuesta),
+    ].join('\n'),
+  });
+}
+
+function avisarNotaNoProcesada_(m) {
+  MailApp.sendEmail({
+    to: m.email,
+    subject: 'No pude anotar: ' + resumenDeNota_(m),
+    name: 'Asistente',
+    body: [
+      'Intenté ' + m.intentos + ' veces entender lo que me mandaste a las ' + m.recibido.slice(11) + ' y no pude.',
+      '',
+      'Motivo: ' + m.error,
+      '',
+      m.texto ? 'Lo que escribiste: "' + m.texto + '"' : 'Era una nota de voz.',
+      'Mandámelo de nuevo en un rato.',
+    ].join('\n'),
+  });
+}
+
+function resumenDeNota_(m) {
+  if (!m.texto) return 'tu nota de voz de las ' + m.recibido.slice(11);
+  return m.texto.length > 60 ? m.texto.slice(0, 57) + '…' : m.texto;
+}
+
 // ===== Chat.js =====
 
 /**
@@ -1610,16 +1787,18 @@ function responder_(evento) {
   const quien = quienEscribe_(evento);
   if (!quien.email) return 'No pude saber quién sos. Escribime desde tu cuenta de la empresa.';
   registrarPersona_(quien.nombre, quien.email);
-  // Es el momento en que el Asistente corre con la cuenta de esta persona: se
-  // aprovecha para poner al día su Google Tasks con la base.
-  sincronizarGoogleTasks_(quien.email);
 
   const texto = textoDelMensaje(evento.mensaje);
   const adjunto = adjuntoDeAudio(evento.mensaje);
   const idDrive = idDeDrive(texto);
-  if (adjunto || idDrive) return recibirAudio_(quien, adjunto, idDrive, texto);
+  const comando = adjunto || idDrive ? { tipo: 'audio' } : interpretarComando(texto);
 
-  const comando = interpretarComando(texto);
+  // Es el momento en que el Asistente corre con la cuenta de esta persona: se
+  // aprovecha para poner al día su Google Tasks con la base. Del todo, solo
+  // cuando pide ver o cerrar tareas; si no, lo barato.
+  sincronizarGoogleTasks_(quien.email, ['pendientes', 'pedidos', 'cerrar'].indexOf(comando.tipo) !== -1);
+
+  if (comando.tipo === 'audio') return recibirAudio_(quien, adjunto, idDrive, texto);
   const hoy = hoy_();
   switch (comando.tipo) {
     case 'vacio':
@@ -1632,7 +1811,7 @@ function responder_(evento) {
     case 'cerrar':
       return cerrar_(quien, comando.numero);
     default:
-      return interpretarNota_(quien, { texto: comando.texto });
+      return atenderNota_(quien, { texto: comando.texto });
   }
 }
 
@@ -1652,7 +1831,7 @@ function recibirAudio_(quien, adjunto, idDrive, texto) {
 
   const esReunion = audio.tamanio > LIMITE_NOTA_BYTES || /reuni[oó]n|minuta/i.test(texto);
   if (!esReunion) {
-    return interpretarNota_(quien, { audio: audio.blob, tipo: audio.tipo, texto: texto });
+    return atenderNota_(quien, { audio: audio.blob, tipo: audio.tipo, texto: texto });
   }
 
   const id = Utilities.getUuid().slice(0, 8);
@@ -1726,41 +1905,108 @@ function subcarpeta_(padre, nombre) {
 
 // ---------- Notas ----------
 
-function interpretarNota_(quien, entrada) {
+/**
+ * Cuánto se deja trabajar a Gemini dentro de un mensaje de Chat. Google corta
+ * la ejecución pasados unos 30 segundos; en el piloto, un pedido que salió bien
+ * tardó 24. Lo que no entra acá sigue en la bandeja, sin apuro.
+ */
+const PLAZO_EN_CHAT_MS = 22000;
+
+const RESPUESTA_DIFERIDA = 'Lo recibí, pero Gemini está lento en este momento. ' +
+  'Lo termino de anotar en un par de minutos y te confirmo por correo.';
+
+/**
+ * Una nota, por texto o por voz. Primero se guarda en la bandeja: si después
+ * algo corta la ejecución, el mensaje ya está a salvo y la tarea automática lo
+ * retoma. Después se intenta resolver en el momento; si no llega, se contesta
+ * enseguida y queda para después.
+ */
+function atenderNota_(quien, entrada) {
+  const m = encolarMensaje_({
+    quien: quien.nombre,
+    email: quien.email,
+    texto: entrada.texto || '',
+    audioId: entrada.audio ? guardarAudioDeNota_(entrada.audio, entrada.tipo) : '',
+    tipoAudio: entrada.audio ? entrada.tipo : '',
+  });
+  try {
+    return procesarMensaje_(m, {
+      blob: entrada.audio,
+      hasta: (INICIO_MENSAJE_ || Date.now()) + PLAZO_EN_CHAT_MS,
+    });
+  } catch (err) {
+    if (!err || !err.pasajero) {
+      actualizarMensaje_(m, { estado: 'error', error: mensajeDe_(err) });
+      throw err;
+    }
+    actualizarMensaje_(m, { estado: 'pendiente', intentos: 1, error: mensajeDe_(err) });
+    return RESPUESTA_DIFERIDA;
+  }
+}
+
+/**
+ * Entiende un mensaje de la bandeja y hace lo que pide. Lo usan tanto Chat, en
+ * el momento, como la tarea automática, después.
+ *
+ * @param {Object} contexto blob: el audio si ya está en memoria; hasta: el
+ *   corte de tiempo; diferido: si corre fuera de Chat, con la cuenta de quien
+ *   instaló y no con la de quien escribió.
+ */
+function procesarMensaje_(m, contexto) {
   const hoy = hoy_();
   const gente = personas_();
   const prompt = promptNota({
-    quien: quien.nombre,
+    quien: m.quien,
     hoy: hoy,
     hoyLargo: fechaParaElModelo(hoy),
     personas: gente.map(function (p) { return p.nombre; }),
-    texto: entrada.texto,
+    texto: m.texto,
   });
-  const partes = entrada.audio
-    ? [parteAudioIncrustado_(entrada.audio, entrada.tipo), { text: prompt }]
-    : [{ text: prompt }];
-
-  // Chat espera como mucho 30 segundos: se acota cuánto puede pensar el modelo
-  // y se le avisa cuánto tiempo queda, para saber si da para un segundo intento.
-  const r = geminiJson_(partes, ESQUEMA_NOTA, {
-    uso: 'nota',
-    razonamiento: 512,
-    hasta: (INICIO_MENSAJE_ || Date.now()) + 27000,
-  });
-
-  if (r.intencion === 'pendientes') return listarPendientes(pendientesDe_(quien.email), hoy);
-  if (r.intencion === 'pedidos') return listarPedidos(pedidosDe_(quien.email), hoy);
-  if (r.intencion !== 'anotar' || !(r.tareas || []).length) {
-    return (r.respuesta || 'No encontré nada para anotar.') + '\n\nEscribí *ayuda* para ver qué puedo hacer.';
+  let partes = [{ text: prompt }];
+  if (m.audioId) {
+    const blob = contexto.blob || DriveApp.getFileById(m.audioId).getBlob();
+    partes = [parteAudioIncrustado_(blob, m.tipoAudio), { text: prompt }];
   }
 
-  const anotadas = anotarTareas_(r.tareas, {
-    pidio: quien.nombre,
-    emailPidio: quien.email,
-    origen: entrada.audio ? 'nota de voz' : 'mensaje',
-    enlace: '',
-  }, gente, true);
-  return confirmarAnotadas(r.respuesta, anotadas, hoy);
+  const r = geminiJson_(partes, ESQUEMA_NOTA, { uso: 'nota', razonamiento: 512, hasta: contexto.hasta });
+
+  let respuesta;
+  if (r.intencion === 'pendientes') {
+    respuesta = listarPendientes(pendientesDe_(m.email), hoy);
+  } else if (r.intencion === 'pedidos') {
+    respuesta = listarPedidos(pedidosDe_(m.email), hoy);
+  } else if (r.intencion !== 'anotar' || !(r.tareas || []).length) {
+    respuesta = (r.respuesta || 'No encontré nada para anotar.') + '\n\nEscribí *ayuda* para ver qué puedo hacer.';
+  } else {
+    const anotadas = anotarTareas_(r.tareas, {
+      pidio: m.quien,
+      emailPidio: m.email,
+      origen: m.audioId ? 'nota de voz' : 'mensaje',
+      enlace: '',
+      mensaje: m.id,
+    }, gente, true, { diferido: Boolean(contexto.diferido) });
+    respuesta = confirmarAnotadas(r.respuesta, anotadas, hoy);
+  }
+
+  actualizarMensaje_(m, { estado: 'lista', error: '' });
+  // El audio de una nota se guarda solo hasta procesarla.
+  if (m.audioId) borrarAudioDeNota_(m.audioId);
+  return respuesta;
+}
+
+function guardarAudioDeNota_(blob, tipo) {
+  const raiz = DriveApp.getFolderById(exigirProp_('CARPETA_ID'));
+  const archivo = subcarpeta_(raiz, 'Bandeja')
+    .createFile(blob.setName('nota-' + Date.now() + extension_(tipo)));
+  return archivo.getId();
+}
+
+function borrarAudioDeNota_(id) {
+  try {
+    DriveApp.getFileById(id).setTrashed(true);
+  } catch (err) {
+    console.error(err);
+  }
 }
 
 /**
@@ -1775,8 +2021,11 @@ function interpretarNota_(quien, entrada) {
  * @param {boolean} sinResponsableEsQuienPide en una nota, "recordame" es para
  *   quien habla. En una reunión, un compromiso sin dueño queda sin dueño.
  */
-function anotarTareas_(items, origen, gente, sinResponsableEsQuienPide) {
+function anotarTareas_(items, origen, gente, sinResponsableEsQuienPide, opciones) {
   const yo = usuarioActual_();
+  // Fuera de Chat se corre con la cuenta de quien instaló: el calendario y la
+  // lista de tareas de quien escribió no están al alcance.
+  const ajeno = Boolean(opciones && opciones.diferido) && origen.emailPidio !== yo;
   return items.map(function (item) {
     const quien = resolverResponsable_(item, origen, gente, sinResponsableEsQuienPide);
     const tipo = clasificarItem(item);
@@ -1793,12 +2042,17 @@ function anotarTareas_(items, origen, gente, sinResponsableEsQuienPide) {
       origen: origen.origen,
       enlace: origen.enlace,
       reunion: origen.reunion || '',
+      mensaje: origen.mensaje || '',
     });
 
     const resultado = { tarea: tarea, problema: quien.problema, nota: '' };
     try {
-      if (tipo === 'evento') {
+      if (tipo === 'evento' && ajeno) {
+        resultado.nota = 'Agregalo a tu calendario con un clic: ' + enlaceCalendario(tarea, item.duracionMinutos);
+      } else if (tipo === 'evento') {
         agendar_(tarea, item, quien, origen, gente, resultado);
+      } else if (ajeno && quien.email === origen.emailPidio) {
+        resultado.nota = 'Aparece en tu Google Tasks la próxima vez que me escribas.';
       } else if (quien.email && quien.email === yo) {
         actualizarTarea_(tarea, { idTasks: crearGoogleTask_(tarea) });
         resultado.nota = 'En tu Google Tasks.';
@@ -1878,6 +2132,7 @@ function cerrar_(quien, numero) {
   if (t.idTasks && t.emailResponsable === quien.email) {
     try {
       completarEnTasks_(t.idTasks);
+      actualizarTarea_(t, { cerradaEnTasks: 'sí' });
     } catch (err) {
       console.error(err && err.stack ? err.stack : err);
     }
@@ -1886,6 +2141,66 @@ function cerrar_(quien, numero) {
   if (t.emailPidio && t.emailPidio !== quien.email) avisarCierre_(t, quien);
   return 'Cerrada la *#' + numero + '* ' + t.que + '.' +
     (t.emailPidio && t.emailPidio !== quien.email ? ' Le avisé a ' + nombreDePila_(t.pidio) + '.' : '');
+}
+
+// ===== Bandeja.js =====
+
+/**
+ * Procesa lo que quedó en la bandeja: los mensajes que no alcanzaron a
+ * resolverse dentro de los 30 segundos de Chat, y los de ejecuciones que Google
+ * cortó a la mitad. Corre cada minuto, con la cuenta de quien instaló.
+ *
+ * Cuando no hay nada pendiente, termina sin leer la planilla: la marca
+ * BANDEJA_PENDIENTE la prende quien encola un mensaje y la apaga esto cuando
+ * no queda nada.
+ */
+
+/**
+ * Si Gemini sigue saturado, se insiste durante media hora, una vez por minuto,
+ * antes de avisarle a la persona que no se pudo.
+ */
+const MAX_INTENTOS_BANDEJA = 30;
+
+function procesarBandeja() {
+  const props = PropertiesService.getScriptProperties();
+  if (!props.getProperty('BANDEJA_PENDIENTE')) return;
+  if (!tomarTurno_('BANDEJA_HASTA')) return;
+  try {
+    const ahora = Date.now();
+    bandeja_()
+      .filter(function (m) { return hayQueRetomar(m, ahora); })
+      .forEach(retomarMensaje_);
+
+    const quedan = bandeja_().some(function (m) {
+      return m.estado === 'pendiente' || m.estado === 'procesando';
+    });
+    if (!quedan) props.deleteProperty('BANDEJA_PENDIENTE');
+  } finally {
+    soltarTurno_('BANDEJA_HASTA');
+  }
+}
+
+function retomarMensaje_(m) {
+  // Si Chat alcanzó a anotarlo antes de que Google cortara la ejecución, no se
+  // anota de nuevo: sería duplicar las tareas de la persona.
+  if (tareasDelMensaje_(m.id).length) {
+    actualizarMensaje_(m, { estado: 'lista', error: '' });
+    return;
+  }
+  try {
+    const respuesta = procesarMensaje_(m, { diferido: true });
+    avisarNotaProcesada_(m, respuesta);
+  } catch (err) {
+    console.error('Mensaje ' + m.id + ': ' + (err && err.stack ? err.stack : err));
+    const intentos = m.intentos + 1;
+    const seRinde = !(err && err.pasajero) || intentos >= MAX_INTENTOS_BANDEJA;
+    actualizarMensaje_(m, {
+      intentos: intentos,
+      error: mensajeDe_(err),
+      estado: seRinde ? 'error' : 'pendiente',
+    });
+    if (seRinde) avisarNotaNoProcesada_(m);
+  }
 }
 
 // ===== Reuniones.js =====
@@ -1923,11 +2238,11 @@ const VIDA_EN_GEMINI_MS = 40 * 60 * 60 * 1000;
 const AVISO_TRANSCRIPCION = 'La transcripción completa se está armando y aparece acá en los próximos minutos.';
 
 function procesarReuniones() {
-  if (!tomarTurno_()) return;
+  if (!tomarTurno_('PROCESANDO_HASTA')) return;
   try {
     procesarPendientes_();
   } finally {
-    soltarTurno_();
+    soltarTurno_('PROCESANDO_HASTA');
   }
 }
 
@@ -1937,21 +2252,21 @@ function procesarReuniones() {
  * gente que escribe en Chat quedaría esperando. El turno vence solo, por si una
  * corrida se corta sin soltarlo.
  */
-function tomarTurno_() {
+function tomarTurno_(clave) {
   const candado = LockService.getScriptLock();
   if (!candado.tryLock(5000)) return false;
   try {
     const props = PropertiesService.getScriptProperties();
-    if (Number(props.getProperty('PROCESANDO_HASTA') || 0) > Date.now()) return false;
-    props.setProperty('PROCESANDO_HASTA', String(Date.now() + 7 * 60 * 1000));
+    if (Number(props.getProperty(clave) || 0) > Date.now()) return false;
+    props.setProperty(clave, String(Date.now() + 7 * 60 * 1000));
     return true;
   } finally {
     candado.releaseLock();
   }
 }
 
-function soltarTurno_() {
-  PropertiesService.getScriptProperties().deleteProperty('PROCESANDO_HASTA');
+function soltarTurno_(clave) {
+  PropertiesService.getScriptProperties().deleteProperty(clave);
 }
 
 function procesarPendientes_() {
@@ -2224,9 +2539,10 @@ function instalar() {
 
   ScriptApp.getProjectTriggers().forEach(function (t) {
     const f = t.getHandlerFunction();
-    if (f === 'procesarReuniones' || f === 'avisoMatutino') ScriptApp.deleteTrigger(t);
+    if (f === 'procesarReuniones' || f === 'avisoMatutino' || f === 'procesarBandeja') ScriptApp.deleteTrigger(t);
   });
   ScriptApp.newTrigger('procesarReuniones').timeBased().everyMinutes(5).create();
+  ScriptApp.newTrigger('procesarBandeja').timeBased().everyMinutes(1).create();
   ScriptApp.newTrigger('avisoMatutino').timeBased().atHour(8).everyDays(1).inTimezone(ZONA).create();
 
   // Qué modelos ofrece Google a esta clave, para no adivinar nombres.

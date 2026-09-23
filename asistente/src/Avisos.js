@@ -7,8 +7,14 @@
  * reuniones y del resumen de la mañana, con la cuenta de quien instaló.
  */
 
+/**
+ * Saca el negrito y la cursiva de Chat para un correo. Solo las marcas, no
+ * cualquier asterisco o guion bajo: un enlace puede tener los dos.
+ */
 function sinFormatoChat_(texto) {
-  return String(texto).replace(/\*/g, '').replace(/_/g, '');
+  return String(texto)
+    .replace(/\*([^*\n]+)\*/g, '$1')
+    .replace(/(^|\s)_([^_\n]+)_(?=\s|$)/g, '$1$2');
 }
 
 function avisarTarea_(t, origen) {
@@ -107,4 +113,39 @@ function avisoMatutino() {
       body: sinFormatoChat_(listarPendientes(suyas, hoy)),
     });
   });
+}
+
+/** La confirmación de una nota que se terminó de procesar fuera de Chat. */
+function avisarNotaProcesada_(m, respuesta) {
+  MailApp.sendEmail({
+    to: m.email,
+    subject: 'Listo: ' + resumenDeNota_(m),
+    name: 'Asistente',
+    body: [
+      'Gemini estaba lento cuando me escribiste (' + m.recibido.slice(11) + '). Ya quedó:',
+      '',
+      sinFormatoChat_(respuesta),
+    ].join('\n'),
+  });
+}
+
+function avisarNotaNoProcesada_(m) {
+  MailApp.sendEmail({
+    to: m.email,
+    subject: 'No pude anotar: ' + resumenDeNota_(m),
+    name: 'Asistente',
+    body: [
+      'Intenté ' + m.intentos + ' veces entender lo que me mandaste a las ' + m.recibido.slice(11) + ' y no pude.',
+      '',
+      'Motivo: ' + m.error,
+      '',
+      m.texto ? 'Lo que escribiste: "' + m.texto + '"' : 'Era una nota de voz.',
+      'Mandámelo de nuevo en un rato.',
+    ].join('\n'),
+  });
+}
+
+function resumenDeNota_(m) {
+  if (!m.texto) return 'tu nota de voz de las ' + m.recibido.slice(11);
+  return m.texto.length > 60 ? m.texto.slice(0, 57) + '…' : m.texto;
 }

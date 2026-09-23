@@ -44,7 +44,7 @@ describe('instalar', () => {
     expect(g.props.get('BASE_ID')).toBeTruthy()
     expect(g.hoja('Tareas')[0]).toContain('Plazo')
     expect(g.hoja('Personas')[0]).toEqual(['Nombre', 'Email', 'Última vez'])
-    expect(g.disparadores.map((t: any) => t.funcion).sort()).toEqual(['avisoMatutino', 'procesarReuniones'])
+    expect(g.disparadores.map((t: any) => t.funcion).sort()).toEqual(['avisoMatutino', 'procesarBandeja', 'procesarReuniones'])
     expect(g.pedidosGemini.at(-1)!.tipo).toBe('prueba')
   })
 
@@ -53,7 +53,7 @@ describe('instalar', () => {
     const base = g.props.get('BASE_ID')
     g.llamar('instalar')
     expect(g.props.get('BASE_ID')).toBe(base)
-    expect(g.disparadores).toHaveLength(2)
+    expect(g.disparadores).toHaveLength(3)
   })
 
   it('elige el modelo liviano entre los que Google ofrece a la clave, sin adivinar nombres', () => {
@@ -84,7 +84,7 @@ describe('instalar', () => {
     g.props.set('GEMINI_API_KEY', 'AQ.x')
     expect(() => g.llamar('instalar')).not.toThrow()
     expect(g.props.get('BASE_ID')).toBeTruthy()
-    expect(g.disparadores).toHaveLength(2)
+    expect(g.disparadores).toHaveLength(3)
   })
 
   it('sin la clave de Gemini se niega y dice qué falta', () => {
@@ -232,13 +232,12 @@ describe('conversación', () => {
     expect(escribir(g, FER, 'anotame algo')).toBe('No tenés nada pendiente.')
   })
 
-  it('si Gemini sigue saturado, lo dice una sola vez y sin culparse', () => {
+  it('si Gemini sigue saturado, no hace esperar a nadie: guarda el mensaje y avisa que lo termina después', () => {
     const g = instalado({ fallaGemini: (t: string) => (t === 'nota' ? 503 : undefined) })
-    // Lo que se vio en la primera prueba real repetía el consejo y decía
-    // "algo falló de mi lado".
-    expect(escribir(g, FER, 'anotame algo')).toBe(
-      'Gemini está saturado en este momento. Suele pasar unos minutos: probá de nuevo en un rato.',
-    )
+    expect(escribir(g, FER, 'anotame algo')).toBe('Lo recibí, pero Gemini está lento en este momento. Lo termino de anotar en un par de minutos y te confirmo por correo.')
+    const [m] = g.hoja('Bandeja').slice(1)
+    expect(m[4]).toBe('anotame algo')
+    expect(m[7]).toBe('pendiente')
   })
 
   it('en Chat contesta primero el modelo liviano, que es el más rápido y el que menos se satura', () => {
@@ -270,9 +269,9 @@ describe('conversación', () => {
     expect(modelos).toEqual(['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.6-flash'])
   })
 
-  it('si sigue saturado, se rinde con un tope y lo dice', () => {
+  it('si sigue saturado, deja de insistir en Chat con un tope', () => {
     const g = instalado({ fallaGemini: (t: string) => (t === 'nota' ? 503 : undefined) })
-    expect(escribir(g, FER, 'anotame algo')).toContain('Gemini está saturado')
+    expect(escribir(g, FER, 'anotame algo')).toBe('Lo recibí, pero Gemini está lento en este momento. Lo termino de anotar en un par de minutos y te confirmo por correo.')
     expect(g.pedidosGemini.filter((p) => p.tipo === 'nota')).toHaveLength(6)
   })
 
@@ -280,7 +279,7 @@ describe('conversación', () => {
     const g = instalado({
       fallaGemini: (t: string, modelo: string) => (t !== 'nota' ? undefined : modelo === 'gemini-3.5-flash-lite' ? 503 : 429),
     })
-    expect(escribir(g, FER, 'anotame algo')).toContain('límite de pedidos')
+    expect(escribir(g, FER, 'anotame algo')).toBe('Lo recibí, pero Gemini está lento en este momento. Lo termino de anotar en un par de minutos y te confirmo por correo.')
     expect(g.pedidosGemini.filter((p) => p.tipo === 'nota')).toHaveLength(2)
   })
 
@@ -291,7 +290,7 @@ describe('conversación', () => {
     })
     g.props.set('GEMINI_MODEL', 'gemini-9-flash')
     const r = escribir(g, FER, 'anotame algo')
-    expect(r).toContain('Gemini está saturado')
+    expect(r).toBe('Lo recibí, pero Gemini está lento en este momento. Lo termino de anotar en un par de minutos y te confirmo por correo.')
     expect(r).not.toContain('404')
   })
 
@@ -315,9 +314,11 @@ describe('conversación', () => {
     expect(g.pedidosGemini.filter((p) => p.tipo === 'nota').every((p) => p.url.includes('gemini-3.6-flash:'))).toBe(true)
   })
 
-  it('un error de Gemini llega como mensaje claro, no como silencio', () => {
-    const g = instalado({ fallaGemini: (t: string) => (t === 'nota' ? 429 : undefined) })
-    expect(escribir(g, FER, 'anotame algo')).toContain('límite de pedidos del nivel gratuito')
+  it('un error que no se arregla solo llega como mensaje claro, no como silencio', () => {
+    const g = instalado({ fallaGemini: (t: string) => (t === 'nota' ? 400 : undefined) })
+    const r = escribir(g, FER, 'anotame algo')
+    expect(r).toContain('Algo falló de mi lado')
+    expect(g.hoja('Bandeja')[1][7]).toBe('error')
   })
 
   it('con una sola función para todos los activadores, saluda, ayuda y no le contesta a quien lo quitó', () => {
@@ -462,7 +463,145 @@ describe('calendario y Google Tasks', () => {
     const g = crearGoogle({ ahora: AHORA, guion: { fallaCalendar: true, fallaTasks: true } })
     g.props.set('GEMINI_API_KEY', 'AQ.x')
     expect(() => g.llamar('instalar')).not.toThrow()
-    expect(g.disparadores).toHaveLength(2)
+    expect(g.disparadores).toHaveLength(3)
+  })
+})
+
+describe('bandeja: nada se pierde', () => {
+  const RONY = { nombre: 'Rony Benítez', email: 'rony@empresa.com' }
+  const EVENTO = { tipo: 'evento', que: 'Reunión de pricing', responsable: '', plazo: '2026-09-26', hora: '13:00' }
+  const TAREA = { tipo: 'tarea', que: 'Mandar la propuesta', responsable: '', plazo: '2026-10-02' }
+
+  /** Gemini saturado mientras la llave esté prendida. */
+  const conSaturacion = (tareas: any[]) => {
+    const estado = { saturado: true }
+    const guion = {
+      nota: { intencion: 'anotar', respuesta: 'Anotado.', tareas },
+      fallaGemini: (t: string) => (t === 'nota' && estado.saturado ? 503 : undefined),
+    }
+    return { guion, estado }
+  }
+
+  it('lo que quedó pendiente se anota solo cuando Gemini se libera, y se confirma por correo', () => {
+    const { guion, estado } = conSaturacion([TAREA])
+    const g = instalado(guion)
+    escribir(g, RONY, 'hola')
+    expect(escribir(g, RONY, 'recordame mandar la propuesta el viernes')).toContain('te confirmo por correo')
+    expect(g.hoja('Tareas')).toHaveLength(1)
+
+    estado.saturado = false
+    g.llamar('procesarBandeja')
+
+    const tarea = g.hoja('Tareas')[1]
+    expect(tarea.slice(2, 5)).toEqual(['Mandar la propuesta', 'Rony Benítez', 'rony@empresa.com'])
+    expect(g.hoja('Bandeja')[1][7]).toBe('lista')
+    const correo = g.correos.at(-1)
+    expect(correo.to).toBe('rony@empresa.com')
+    expect(correo.subject).toBe('Listo: recordame mandar la propuesta el viernes')
+    // Corre con la cuenta de quien instaló: la lista de Rony no está a su alcance,
+    // así que no se la toca, y se le dice cuándo va a aparecer.
+    expect(correo.body).toContain('Aparece en tu Google Tasks la próxima vez que me escribas.')
+    expect(g.tasksDe(RONY.email)).toHaveLength(0)
+    expect(g.tasksDe(FER.email)).toHaveLength(0)
+
+    // Y aparece, en efecto, cuando Rony vuelve a escribir.
+    escribir(g, RONY, 'hola')
+    expect(g.tasksDe(RONY.email).map((t: any) => t.title)).toEqual(['Mandar la propuesta'])
+  })
+
+  it('un evento de otra persona procesado después va con un enlace para agregarlo al calendario', () => {
+    const { guion, estado } = conSaturacion([EVENTO])
+    const g = instalado(guion)
+    escribir(g, RONY, 'agenda la reunión de pricing mañana a las 13')
+    estado.saturado = false
+    g.llamar('procesarBandeja')
+
+    expect(g.eventos).toHaveLength(0)
+    const cuerpo = g.correos.at(-1).body
+    expect(cuerpo).toContain('Agregalo a tu calendario con un clic: https://calendar.google.com/calendar/render?action=TEMPLATE')
+    // 13:00 en Asunción son las 16:00 UTC.
+    expect(cuerpo).toContain('dates=20260926T160000Z/20260926T170000Z')
+    // En un correo no van los asteriscos de Chat.
+    expect(cuerpo).not.toContain('*#1*')
+  })
+
+  it('si el mensaje era de quien instaló, lo agenda directo en su calendario', () => {
+    const { guion, estado } = conSaturacion([EVENTO])
+    const g = instalado(guion)
+    escribir(g, FER, 'agenda la reunión de pricing mañana a las 13')
+    estado.saturado = false
+    g.llamar('procesarBandeja')
+    expect(g.eventos).toHaveLength(1)
+    expect(g.eventos[0].duenio).toBe(FER.email)
+  })
+
+  it('una nota de voz pendiente se guarda en Drive hasta procesarla, y después se borra', () => {
+    const { guion, estado } = conSaturacion([TAREA])
+    const g = instalado(guion)
+    escribir(g, FER, '', [g.subirAChat(200_000)])
+    const audioId = g.hoja('Bandeja')[1][5]
+    const audio = g.archivos.get(audioId)
+    expect(audio.getSize()).toBe(200_000)
+
+    estado.saturado = false
+    g.llamar('procesarBandeja')
+    const pedido = g.pedidosGemini.filter((p) => p.tipo === 'nota').at(-1)!
+    expect(pedido.cuerpo.contents[0].parts[0].inline_data).toBeTruthy()
+    expect(audio.enPapelera).toBe(true)
+    expect(g.hoja('Tareas')[1][9]).toBe('nota de voz')
+  })
+
+  it('si Google corta la ejecución a la mitad, a los dos minutos se retoma', () => {
+    const g = instalado({ nota: { intencion: 'anotar', respuesta: 'Anotado.', tareas: [TAREA] } })
+    // Lo que pasó en el piloto: el mensaje quedó guardado y la ejecución murió.
+    g.comoUsuario(FER.email, () => g.llamar('encolarMensaje_', { quien: FER.nombre, email: FER.email, texto: 'recordame mandar la propuesta' }))
+
+    g.llamar('procesarBandeja')
+    expect(g.hoja('Bandeja')[1][7]).toBe('procesando') // quizás todavía está trabajando
+
+    g.avanzar(3 * 60 * 1000)
+    g.llamar('procesarBandeja')
+    expect(g.hoja('Bandeja')[1][7]).toBe('lista')
+    expect(g.hoja('Tareas').slice(1).map((t: any) => t[2])).toEqual(['Mandar la propuesta'])
+  })
+
+  it('si la ejecución cortada alcanzó a anotar, no se anota dos veces', () => {
+    const g = instalado({ nota: { intencion: 'anotar', respuesta: 'Anotado.', tareas: [TAREA] } })
+    const m = g.comoUsuario(FER.email, () => g.llamar('encolarMensaje_', { quien: FER.nombre, email: FER.email, texto: 'x' }))
+    g.comoUsuario(FER.email, () => g.llamar('agregarTarea_', {
+      que: 'Mandar la propuesta', responsable: FER.nombre, emailResponsable: FER.email, pidio: FER.nombre,
+      emailPidio: FER.email, origen: 'mensaje', mensaje: m.id,
+    }))
+    g.avanzar(3 * 60 * 1000)
+    g.llamar('procesarBandeja')
+    expect(g.hoja('Tareas')).toHaveLength(2)
+    expect(g.hoja('Bandeja')[1][7]).toBe('lista')
+    expect(g.pedidosGemini.filter((p) => p.tipo === 'nota')).toHaveLength(0)
+  })
+
+  it('si Gemini no se libera en media hora, avisa por correo que no pudo', () => {
+    const { guion } = conSaturacion([TAREA])
+    const g = instalado(guion)
+    escribir(g, FER, 'recordame mandar la propuesta')
+    // El intento en Chat es el primero: quedan 29, uno por minuto.
+    for (let i = 0; i < 28; i++) {
+      g.avanzar(60 * 1000)
+      g.llamar('procesarBandeja')
+    }
+    expect(g.hoja('Bandeja')[1][7]).toBe('pendiente')
+    g.avanzar(60 * 1000)
+    g.llamar('procesarBandeja')
+    expect(g.hoja('Bandeja')[1][7]).toBe('error')
+    const aviso = g.correos.at(-1)
+    expect(aviso.subject).toBe('No pude anotar: recordame mandar la propuesta')
+    expect(aviso.body).toContain('Intenté 30 veces')
+  })
+
+  it('sin nada pendiente, la tarea de cada minuto ni abre la planilla', () => {
+    const g = instalado({ nota: { intencion: 'pendientes', respuesta: '', tareas: [] } })
+    escribir(g, FER, 'anotame algo')
+    g.llamar('procesarBandeja') // ve que está todo listo y apaga la marca
+    expect(g.props.get('BANDEJA_PENDIENTE')).toBeUndefined()
   })
 })
 

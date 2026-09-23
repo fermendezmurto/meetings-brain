@@ -11,7 +11,7 @@ const raiz = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'asis
 
 export const ORDEN = [
   'Config.js', 'Modelos.js', 'Texto.js', 'Fechas.js', 'Agenda.js', 'Intencion.js', 'Eventos.js', 'Prompts.js',
-  'Formato.js', 'Base.js', 'Gemini.js', 'Google.js', 'Avisos.js', 'Chat.js', 'Reuniones.js', 'Instalar.js',
+  'Formato.js', 'Base.js', 'Gemini.js', 'Google.js', 'Avisos.js', 'Chat.js', 'Bandeja.js', 'Reuniones.js', 'Instalar.js',
 ]
 
 export function armar() {

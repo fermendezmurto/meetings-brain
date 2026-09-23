@@ -50,9 +50,10 @@ function instalar() {
 
   ScriptApp.getProjectTriggers().forEach(function (t) {
     const f = t.getHandlerFunction();
-    if (f === 'procesarReuniones' || f === 'avisoMatutino') ScriptApp.deleteTrigger(t);
+    if (f === 'procesarReuniones' || f === 'avisoMatutino' || f === 'procesarBandeja') ScriptApp.deleteTrigger(t);
   });
   ScriptApp.newTrigger('procesarReuniones').timeBased().everyMinutes(5).create();
+  ScriptApp.newTrigger('procesarBandeja').timeBased().everyMinutes(1).create();
   ScriptApp.newTrigger('avisoMatutino').timeBased().atHour(8).everyDays(1).inTimezone(ZONA).create();
 
   // Qué modelos ofrece Google a esta clave, para no adivinar nombres.
