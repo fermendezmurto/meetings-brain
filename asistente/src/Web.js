@@ -44,6 +44,8 @@ function doPost(e) {
       error: err && err.message ? err.message : String(err),
       desvinculado: Boolean(err && err.desvinculado),
       reiniciar: Boolean(err && err.reiniciar),
+      // Lo que no se arregla reintentando: la app lo muestra y no insiste.
+      definitivo: Boolean(err && err.definitivo),
     });
   }
 }
@@ -123,7 +125,7 @@ function telefono_(token) {
 
 function idDeGrabacion_(texto) {
   const id = String(texto || '').toLowerCase();
-  if (!/^[0-9a-z]{6,32}$/.test(id)) throw new Error('La grabación no trae un identificador válido.');
+  if (!/^[0-9a-z]{6,32}$/.test(id)) throw errorCon_('La grabación no trae un identificador válido.', { definitivo: true });
   return id;
 }
 
@@ -157,21 +159,21 @@ function reunionPorId_(id) {
 function iniciarGrabacion_(quien, p) {
   const id = idDeGrabacion_(p.id);
   const tamanio = Number(p.tamanio);
-  if (!(tamanio > 0)) throw new Error('La grabación está vacía.');
+  if (!(tamanio > 0)) throw errorCon_('La grabación está vacía.', { definitivo: true });
   if (tamanio > LIMITE_GRABACION_BYTES) {
-    throw new Error('La grabación pesa ' + Math.round(tamanio / 1048576) + ' MB y el máximo es ' +
-      Math.round(LIMITE_GRABACION_BYTES / 1048576) + ' MB.');
+    throw errorCon_('La grabación pesa ' + Math.round(tamanio / 1048576) + ' MB y el máximo es ' +
+      Math.round(LIMITE_GRABACION_BYTES / 1048576) + ' MB.', { definitivo: true });
   }
 
   return conCandado_(function () {
     const ya = subida_(id);
     if (ya) {
-      if (ya.email !== quien.email) throw new Error('Esa grabación es de otra persona.');
+      if (ya.email !== quien.email) throw errorCon_('Esa grabación es de otra persona.', { definitivo: true });
       return { ok: true, recibidos: ya.recibidos, parteBytes: PARTE_APP_BYTES };
     }
     const hecha = reunionPorId_(id);
     if (hecha) {
-      if (hecha.email !== quien.email) throw new Error('Esa grabación es de otra persona.');
+      if (hecha.email !== quien.email) throw errorCon_('Esa grabación es de otra persona.', { definitivo: true });
       return { ok: true, recibidos: tamanio, terminada: true };
     }
 
@@ -215,7 +217,7 @@ function recibirParte_(quien, p) {
     if (hecha && hecha.email === quien.email) return { ok: true, terminada: true };
     throw errorCon_('No encuentro esa grabación. La app la vuelve a mandar desde el principio.', { reiniciar: true });
   }
-  if (s.email !== quien.email) throw new Error('Esa grabación es de otra persona.');
+  if (s.email !== quien.email) throw errorCon_('Esa grabación es de otra persona.', { definitivo: true });
 
   const desde = Number(p.desde);
   // Una parte repetida (no le llegó la respuesta anterior) o un salto: se le

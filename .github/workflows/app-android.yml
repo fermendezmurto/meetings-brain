@@ -1,0 +1,88 @@
+# Compila la app del Asistente para Android y la publica como descarga.
+#
+# Cada cambio en movil/ genera un APK nuevo en la sección Releases del
+# repositorio. No hace falta Android Studio ni una cuenta de Expo: el proyecto
+# Android se genera acá mismo con expo prebuild.
+name: App Android
+
+on:
+  push:
+    branches: [claude/meeting-recording-drive-app-6ugk55, main]
+    paths: ['movil/**', '.github/workflows/app-android.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: app-android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: movil/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Dependencias
+        working-directory: movil
+        run: npm ci
+
+      - name: Chequeo de tipos
+        working-directory: movil
+        run: npx tsc --noEmit
+
+      # Cada compilación con un número más alto: Android lo pide para actualizar.
+      - name: Número de versión
+        working-directory: movil
+        run: |
+          jq --argjson n ${{ github.run_number }} \
+            '.expo.android.versionCode = $n | .expo.version = "1.0.\($n)"' app.json > app.tmp.json
+          mv app.tmp.json app.json
+
+      - name: Proyecto Android
+        working-directory: movil
+        run: npx expo prebuild --platform android --no-install
+
+      # Siempre la misma firma: así cada versión se instala encima de la anterior.
+      - name: Firma
+        run: cp movil/credenciales/asistente.keystore movil/android/app/debug.keystore
+
+      - name: Compilar
+        working-directory: movil/android
+        run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
+
+      - name: Preparar la descarga
+        run: cp movil/android/app/build/outputs/apk/release/app-release.apk Asistente.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Asistente-android
+          path: Asistente.apk
+
+      - name: Publicar
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: app-android-${{ github.run_number }}
+          name: Asistente para Android (versión ${{ github.run_number }})
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          files: Asistente.apk
+          body: |
+            Descargá **Asistente.apk** desde el celular y abrilo para instalar.
+            Si Android lo pide, permití instalar apps de esta fuente.
+            Si ya tenías la app, se actualiza sin perder el vínculo.

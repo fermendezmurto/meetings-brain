@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "Asistente",
+    "slug": "asistente",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "ios": {
+      "bundleIdentifier": "py.com.softshop.asistente",
+      "supportsTablet": false,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "py.com.softshop.asistente",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "backgroundColor": "#D93025",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": [
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "El Asistente usa el micrófono para grabar las reuniones que vos iniciás.",
+          "enableBackgroundRecording": true,
+          "enableBackgroundPlayback": false
+        }
+      ],
+      "expo-secure-store"
+    ]
+  }
+}

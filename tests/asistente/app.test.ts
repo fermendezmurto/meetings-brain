@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { crearGoogle, mensaje } from './google-falso'
+import { aBase64 } from '../../movil/src/base64'
+import { enviarGrabacion, ErrorDefinitivo } from '../../movil/src/subida'
 
 /**
  * La app del celular contra el Asistente: vincular el teléfono con un código
@@ -52,26 +54,16 @@ function audio(bytes: number) {
   return b
 }
 
-/** Manda una grabación como la app: pide por dónde va y sigue desde ahí, reintentando. */
-function enviar(g: any, token: string, id: string, datos: Buffer, extra: any = {}) {
-  let r = pedir(g, { accion: 'iniciar', token, id, tamanio: datos.length, tipo: 'audio/mp4', ...extra })
-  let vueltas = 0
-  while (r.ok && !r.terminada) {
-    if (++vueltas > 50) throw new Error('No termina nunca')
-    const desde = r.recibidos
-    const parte = datos.subarray(desde, Math.min(desde + r.parteBytes || desde + 4 * 1024 * 1024, datos.length))
-    const siguiente = pedir(g, { accion: 'parte', token, id, desde, datos: parte.toString('base64') })
-    if (!siguiente.ok) {
-      if (siguiente.reiniciar) {
-        r = pedir(g, { accion: 'iniciar', token, id, tamanio: datos.length, tipo: 'audio/mp4', ...extra })
-        continue
-      }
-      // Error pasajero: la app espera y vuelve a preguntar desde el mismo lugar.
-      continue
-    }
-    r = { ...siguiente, parteBytes: r.parteBytes }
-  }
-  return r
+/** La app de verdad (movil/src/subida.ts), hablándole al Asistente simulado. */
+async function enviar(g: any, token: string, id: string, datos: Buffer, extra: { nota?: string } = {}) {
+  await enviarGrabacion(
+    { id, tamanio: datos.length, tipo: 'audio/mp4', ...extra },
+    token,
+    async (cuerpo) => pedir(g, cuerpo),
+    (desde, largo) => new Uint8Array(datos.subarray(desde, desde + largo)),
+    { esperar: async () => {} },
+  )
+  return { ok: true, terminada: true }
 }
 
 describe('vincular el teléfono', () => {
@@ -117,13 +109,13 @@ describe('vincular el teléfono', () => {
 })
 
 describe('mandar una grabación', () => {
-  it('llega entera a Drive, queda en cola como reunión de quien grabó, y sale la minuta', () => {
+  it('llega entera a Drive, queda en cola como reunión de quien grabó, y sale la minuta', async () => {
     const g = instalado()
     escribir(g, DIANA, 'hola')
     const token = vincular(g, FER)
     const datos = audio(10 * 1024 * 1024 + 5)
 
-    const r = enviar(g, token, 'a1b2c3d4e5f6', datos, { nota: 'con Diana, presupuesto' })
+    const r = await enviar(g, token, 'a1b2c3d4e5f6', datos, { nota: 'con Diana, presupuesto' })
     expect(r).toMatchObject({ ok: true, terminada: true })
 
     const pedazos = g.pedidosDrive.filter((p) => p.tipo === 'pedazo')
@@ -152,26 +144,26 @@ describe('mandar una grabación', () => {
     expect(estado.grabaciones[0].minuta).toContain('docs.google.com')
   })
 
-  it('si se corta la señal y no llega la respuesta, sigue desde lo que Drive ya tiene, sin repetir nada', () => {
+  it('si se corta la señal y no llega la respuesta, sigue desde lo que Drive ya tiene, sin repetir nada', async () => {
     const g = instalado({ fallaDrive: (n: number) => (n === 2 ? 'perder' : undefined) })
     const token = vincular(g, FER)
     const datos = audio(9 * 1024 * 1024)
 
-    expect(enviar(g, token, 'corte0001', datos)).toMatchObject({ ok: true, terminada: true })
+    expect(await enviar(g, token, 'corte0001', datos)).toMatchObject({ ok: true, terminada: true })
     const fila = g.hoja('Reuniones')[1]
     expect(g.archivos.get(fila[7]).blob.bytes.equals(datos)).toBe(true)
     expect(g.pedidosDrive.some((p) => p.tipo === 'consulta')).toBe(true)
   })
 
-  it('si Drive falla un momento, la parte se vuelve a mandar', () => {
+  it('si Drive falla un momento, la parte se vuelve a mandar', async () => {
     const g = instalado({ fallaDrive: (n: number) => (n === 1 ? 503 : undefined) })
     const token = vincular(g, FER)
     const datos = audio(5 * 1024 * 1024)
-    expect(enviar(g, token, 'falla0001', datos)).toMatchObject({ ok: true, terminada: true })
+    expect(await enviar(g, token, 'falla0001', datos)).toMatchObject({ ok: true, terminada: true })
     expect(g.archivos.get(g.hoja('Reuniones')[1][7]).blob.bytes.equals(datos)).toBe(true)
   })
 
-  it('si la app vuelve a empezar la misma grabación, no se duplica nada', () => {
+  it('si la app vuelve a empezar la misma grabación, no se duplica nada', async () => {
     const g = instalado()
     const token = vincular(g, FER)
     const datos = audio(6 * 1024 * 1024)
@@ -182,12 +174,12 @@ describe('mandar una grabación', () => {
     expect(otraVez.recibidos).toBe(4 * 1024 * 1024)
     expect(g.pedidosDrive.filter((p) => p.tipo === 'sesion')).toHaveLength(1)
 
-    enviar(g, token, 'repite001', datos)
-    enviar(g, token, 'repite001', datos)
+    await enviar(g, token, 'repite001', datos)
+    await enviar(g, token, 'repite001', datos)
     expect(g.hoja('Reuniones')).toHaveLength(2)
   })
 
-  it('nadie puede meterse en la grabación de otro ni ver su estado', () => {
+  it('nadie puede meterse en la grabación de otro ni ver su estado', async () => {
     const g = instalado()
     const deFer = vincular(g, FER)
     const deDiana = vincular(g, DIANA)
@@ -198,7 +190,7 @@ describe('mandar una grabación', () => {
     expect(ajena).toMatchObject({ ok: false })
     expect(ajena.error).toContain('otra persona')
 
-    enviar(g, deFer, 'privada01', datos)
+    await enviar(g, deFer, 'privada01', datos)
     expect(pedir(g, { accion: 'estado', token: deDiana, ids: ['privada01'] }).grabaciones).toEqual([])
   })
 
@@ -215,5 +207,63 @@ describe('mandar una grabación', () => {
     const g = instalado()
     const r = JSON.parse(g.llamar('doGet', {}).getContent())
     expect(r).toMatchObject({ ok: true, servicio: 'Asistente', version: 1 })
+  })
+})
+
+describe('la app', () => {
+  it('pasa los bytes a base64 igual que Node, con cualquier largo', () => {
+    for (const largo of [0, 1, 2, 3, 4, 5, 12287, 12288, 12289, 100000]) {
+      const b = audio(largo)
+      expect(aBase64(new Uint8Array(b))).toBe(b.toString('base64'))
+    }
+  })
+
+  it('sin señal espera y reintenta, y termina cuando vuelve la conexión', async () => {
+    const g = instalado()
+    const token = vincular(g, FER)
+    const datos = audio(5 * 1024 * 1024)
+    let cortes = 3
+    const esperas: number[] = []
+    await enviarGrabacion(
+      { id: 'sinsenal01', tamanio: datos.length, tipo: 'audio/mp4' },
+      token,
+      async (cuerpo) => {
+        if (cuerpo.accion === 'parte' && cortes-- > 0) throw new Error('Network request failed')
+        return pedir(g, cuerpo)
+      },
+      (desde, largo) => new Uint8Array(datos.subarray(desde, desde + largo)),
+      { esperar: async (ms) => { esperas.push(ms) } },
+    )
+    expect(g.archivos.get(g.hoja('Reuniones')[1][7]).blob.bytes.equals(datos)).toBe(true)
+    // Cada vez espera más, para no gastar batería insistiendo.
+    expect(esperas).toEqual([2000, 4000, 8000])
+  })
+
+  it('si el teléfono fue desvinculado, deja de insistir y lo dice', async () => {
+    const g = instalado()
+    const datos = audio(1000)
+    await expect(enviarGrabacion(
+      { id: 'desvinc01', tamanio: datos.length, tipo: 'audio/mp4' },
+      'b'.repeat(64),
+      async (cuerpo) => pedir(g, cuerpo),
+      () => new Uint8Array(datos),
+      { esperar: async () => {} },
+    )).rejects.toMatchObject({ desvinculado: true })
+  })
+
+  it('lo que no se arregla reintentando (una grabación enorme) no se reintenta', async () => {
+    const g = instalado()
+    const token = vincular(g, FER)
+    let pedidos = 0
+    const error = await enviarGrabacion(
+      { id: 'enorme002', tamanio: 900 * 1024 * 1024, tipo: 'audio/mp4' },
+      token,
+      async (cuerpo) => { pedidos++; return pedir(g, cuerpo) },
+      () => new Uint8Array(0),
+      { esperar: async () => {} },
+    ).catch((err) => err)
+    expect(error).toBeInstanceOf(ErrorDefinitivo)
+    expect(error.message).toContain('900 MB')
+    expect(pedidos).toBe(1)
   })
 })

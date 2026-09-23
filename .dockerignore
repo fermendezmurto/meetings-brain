@@ -6,3 +6,6 @@ node_modules
 .env.local
 README.md
 DESPLIEGUE.md
+movil
+asistente
+tests
