@@ -203,7 +203,7 @@ tareas:** así la conoce.
 | "Asistente no responde", y en **Ejecuciones** no aparece ningún `onMessage` | Chat no está llegando al código. Revisá que `appsscript.json` sea el de [`dist/appsscript.json`](dist/appsscript.json) (tiene que tener una sección `addOns`), y el ID de implementación y los nombres de las funciones en la configuración de Chat. |
 | "Permission denied while enabling APIs" | Habilitá a mano las cuatro APIs del paso 2c y volvé a correr instalar. |
 | "Google retiró el modelo…" | El mismo mensaje dice qué valor poner en la propiedad `GEMINI_MODEL`. |
-| "Gemini está saturado en este momento" | Es de Google y suele durar minutos. Antes de decirlo, el Asistente ya probó con un modelo de respaldo (`gemini-3.5-flash-lite`, se cambia con la propiedad `GEMINI_MODEL_RESPALDO`). Con las reuniones sigue reintentando solo durante una hora. |
+| "Gemini está saturado en este momento" | Es de Google y suele durar minutos; en el nivel gratuito pasa más seguido. Antes de decirlo, el Asistente ya probó con los dos modelos (ver *Qué modelos usa*). Con las reuniones sigue reintentando solo durante una hora. |
 
 Para ver qué hizo el Asistente por dentro: en script.google.com, menú de la
 izquierda → **Ejecuciones**.
@@ -226,6 +226,17 @@ izquierda → **Ejecuciones**.
   marca como hecha en Google Tasks.
 - Borrar una tarea de Google Tasks no la cierra: sigue en el resumen de la
   mañana hasta que alguien escriba *listo*.
+
+## Qué modelos usa
+
+- **En Chat, primero el liviano** (`GEMINI_MODEL_NOTAS`): es el más rápido y el
+  que menos se satura, y para entender una nota alcanza. Si está saturado,
+  prueba el grande. `instalar` lo elige solo entre los modelos que Google
+  ofrece a la clave, y en el registro muestra cuánto tardó cada uno.
+- **En las reuniones, primero el grande** (`GEMINI_MODEL`), por la calidad de la
+  minuta. Si está saturado, prueba el liviano (`GEMINI_MODEL_RESPALDO` lo
+  cambia; `ninguno` lo apaga).
+- Todos se cambian en **Propiedades del script**, sin tocar el código.
 
 ## Para conectar otros sistemas
 

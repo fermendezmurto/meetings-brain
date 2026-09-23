@@ -14,7 +14,11 @@
  * quitado, comando) apunta a una función. Esta los atiende a todos, por si se
  * configuró una sola función común.
  */
+/** Cuándo empezó a atenderse el mensaje: Chat corta la espera a los 30 segundos. */
+let INICIO_MENSAJE_ = 0;
+
 function onMessage(e) {
+  INICIO_MENSAJE_ = Date.now();
   const evento = normalizarEvento(e);
   if (evento.tipo === 'ADDED_TO_SPACE') return onAddedToSpace(e);
   if (evento.tipo === 'REMOVED_FROM_SPACE') return onRemovedFromSpace(e);
@@ -195,8 +199,13 @@ function interpretarNota_(quien, entrada) {
     ? [parteAudioIncrustado_(entrada.audio, entrada.tipo), { text: prompt }]
     : [{ text: prompt }];
 
-  // Chat espera como mucho 30 segundos: se acota cuánto puede pensar el modelo.
-  const r = geminiJson_(partes, ESQUEMA_NOTA, { razonamiento: 512 });
+  // Chat espera como mucho 30 segundos: se acota cuánto puede pensar el modelo
+  // y se le avisa cuánto tiempo queda, para saber si da para un segundo intento.
+  const r = geminiJson_(partes, ESQUEMA_NOTA, {
+    uso: 'nota',
+    razonamiento: 512,
+    hasta: (INICIO_MENSAJE_ || Date.now()) + 27000,
+  });
 
   if (r.intencion === 'pendientes') return listarPendientes(pendientesDe_(quien.email), hoy);
   if (r.intencion === 'pedidos') return listarPedidos(pedidosDe_(quien.email), hoy);

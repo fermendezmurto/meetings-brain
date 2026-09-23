@@ -24,6 +24,8 @@ export interface Guion {
   fallaGemini?: (tipo: string, modelo: string) => number | undefined
   /** Modelos que Google ya no ofrece a cuentas nuevas. */
   modelosRetirados?: string[]
+  /** Lo que devuelve la lista de modelos; null para que falle. */
+  modelosDisponibles?: string[] | null
   /** El modelo rechaza la forma en que se le acota el razonamiento. */
   rechazaRazonamiento?: boolean
   /** Solo estos modelos rechazan el parámetro de razonamiento. */
@@ -350,6 +352,17 @@ export function crearGoogle(opciones: { ahora: string; guion?: Guion }) {
         return respuesta(200, { file: { name: 'files/abc', uri: 'https://generativelanguage.googleapis.com/v1beta/files/abc', state: 'PROCESSING' } })
       }
       if (url.endsWith('/v1beta/files/abc')) return respuesta(200, { state: 'ACTIVE' })
+      if (url.includes('/v1beta/models?')) {
+        pedidosGemini.push({ tipo: 'lista-modelos', cuerpo: o, claveEnEncabezado, url })
+        if (guion.modelosDisponibles === null) return respuesta(500, 'error')
+        const nombres = guion.modelosDisponibles ?? ['gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-flash']
+        return respuesta(200, {
+          models: [
+            ...nombres.map((n) => ({ name: 'models/' + n, supportedGenerationMethods: ['generateContent', 'countTokens'] })),
+            { name: 'models/text-embedding-004', supportedGenerationMethods: ['embedContent'] },
+          ],
+        })
+      }
 
       if (url.includes(':generateContent')) {
         const cuerpo = JSON.parse(o.payload)

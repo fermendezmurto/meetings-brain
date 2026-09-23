@@ -16,7 +16,9 @@ function claveGemini_() {
  *
  * @param {Object[]} partes     texto, audio incrustado o referencia a un archivo
  * @param {Object}   esquema    la forma exacta de la respuesta
- * @param {Object}   opciones   maxTokens; razonamiento, el tope de lo que el
+ * @param {Object}   opciones   uso: 'nota' (Chat, alguien esperando) o
+ *                              'reunion'; hasta: momento de corte en ms;
+ *                              maxTokens; razonamiento, el tope de lo que el
  *                              modelo puede "pensar" antes de contestar
  */
 function geminiJson_(partes, esquema, opciones) {
@@ -26,22 +28,22 @@ function geminiJson_(partes, esquema, opciones) {
 /** Igual que geminiJson_, pero devuelve además lo que cobró Gemini. */
 function geminiConUso_(partes, esquema, opciones) {
   opciones = opciones || {};
-  const modelo = prop_('GEMINI_MODEL', MODELO_POR_DEFECTO);
+  const modelos = modelosPara_(opciones.uso);
+  const modelo = modelos.principal;
+  const restante = function () { return opciones.hasta ? opciones.hasta - Date.now() : undefined; };
 
-  let inicio = Date.now();
   let r = pedirConAjuste_(modelo, partes, esquema, opciones);
-  if (convieneReintentar(r.getResponseCode(), Date.now() - inicio)) {
-    const respaldo = modeloDeRespaldo(modelo, prop_('GEMINI_MODEL_RESPALDO', RESPALDO_POR_DEFECTO));
-    if (respaldo) {
+  if (convieneReintentar(r.getResponseCode(), restante())) {
+    if (modelos.respaldo) {
       // Otro modelo tiene otra capacidad: probarlo al toque tiene más chance
-      // que esperar a que se desature el principal.
-      const r2 = pedirConAjuste_(respaldo, partes, esquema, opciones);
+      // que esperar a que se desature el primero.
+      const r2 = pedirConAjuste_(modelos.respaldo, partes, esquema, opciones);
       if (r2.getResponseCode() === 200) {
         r = r2;
       } else {
         // Si el respaldo tampoco anda, o no existe, la persona igual recibe el
-        // aviso de saturación del principal, nunca un error técnico del respaldo.
-        console.error('El respaldo ' + respaldo + ' tampoco respondió (' + r2.getResponseCode() + '): ' +
+        // aviso de saturación, nunca un error técnico del respaldo.
+        console.error('El respaldo ' + modelos.respaldo + ' tampoco respondió (' + r2.getResponseCode() + '): ' +
           r2.getContentText().slice(0, 200));
       }
     } else {
@@ -59,7 +61,7 @@ function geminiConUso_(partes, esquema, opciones) {
     throw errorPasajero_('Gemini está saturado en este momento. Suele pasar unos minutos: probá de nuevo en un rato.');
   }
   if (codigo === 404 && /no longer available|not found/i.test(cuerpo)) {
-    throw new Error(mensajeModeloRetirado(modelo, cuerpo));
+    throw new Error(mensajeModeloRetirado(modelo, cuerpo, modelos.propiedad));
   }
   if (codigo !== 200) throw new Error('Gemini respondió ' + codigo + ': ' + cuerpo.slice(0, 400));
 
@@ -187,4 +189,26 @@ function encabezado_(respuesta, nombre) {
   const todos = respuesta.getAllHeaders();
   const clave = Object.keys(todos).filter(function (k) { return k.toLowerCase() === nombre; })[0];
   return clave ? String(todos[clave]) : '';
+}
+
+/**
+ * Los modelos que Google ofrece a esta clave. Sirve para no adivinar nombres:
+ * Google los cambia seguido y retira los viejos.
+ */
+function modelosDisponibles_() {
+  const nombres = [];
+  let pagina = '';
+  do {
+    const r = UrlFetchApp.fetch(GEMINI + '/v1beta/models?pageSize=1000' + (pagina ? '&pageToken=' + pagina : ''), {
+      headers: { 'x-goog-api-key': claveGemini_() },
+      muteHttpExceptions: true,
+    });
+    if (r.getResponseCode() !== 200) throw new Error('Google no devolvió la lista de modelos (' + r.getResponseCode() + ').');
+    const datos = JSON.parse(r.getContentText());
+    (datos.models || []).forEach(function (m) {
+      if ((m.supportedGenerationMethods || []).indexOf('generateContent') !== -1) nombres.push(m.name);
+    });
+    pagina = datos.nextPageToken || '';
+  } while (pagina);
+  return nombres;
 }

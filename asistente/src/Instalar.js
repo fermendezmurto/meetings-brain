@@ -55,21 +55,25 @@ function instalar() {
   ScriptApp.newTrigger('procesarReuniones').timeBased().everyMinutes(5).create();
   ScriptApp.newTrigger('avisoMatutino').timeBased().atHour(8).everyDays(1).inTimezone(ZONA).create();
 
-  // Una clave inválida o un modelo retirado frenan la instalación: hay que
-  // corregirlos. Que el modelo esté saturado, no: Google ya aceptó la clave
-  // para llegar a decir eso, y se arregla solo.
-  let estadoGemini = 'la clave de Gemini funciona.';
+  // Qué modelos ofrece Google a esta clave, para no adivinar nombres.
+  let disponibles = [];
   try {
-    const prueba = geminiJson_(
-      [{ text: 'Respondé con ok en true.' }],
-      { type: 'OBJECT', properties: { ok: { type: 'BOOLEAN' } }, required: ['ok'] }
-    );
-    if (!prueba.ok) throw new Error('Gemini respondió, pero no lo esperado: ' + JSON.stringify(prueba));
+    disponibles = modelosDisponibles_();
+    const liviano = elegirModeloLiviano(disponibles);
+    if (liviano && !prop_('GEMINI_MODEL_NOTAS')) props.setProperty('GEMINI_MODEL_NOTAS', liviano);
   } catch (err) {
-    if (!err.pasajero) throw err;
-    estadoGemini = 'Google aceptó la clave, pero Gemini está saturado en este momento. ' +
-      'Los primeros mensajes pueden fallar unos minutos.';
+    console.error(err);
   }
+
+  // Una clave inválida o un modelo retirado frenan la instalación: hay que
+  // corregirlos. Que un modelo esté saturado, no: Google ya aceptó la clave
+  // para llegar a decir eso, y se arregla solo.
+  const pruebas = [modelosPara_('nota'), modelosPara_('reunion')]
+    .filter(function (m, i, todos) { return i === 0 || m.principal !== todos[0].principal; })
+    .map(function (m) { return probarModelo_(m.principal, m.propiedad); });
+  const estadoGemini = pruebas.some(function (p) { return p.ok; })
+    ? 'la clave de Gemini funciona.'
+    : 'Google aceptó la clave, pero Gemini está saturado en este momento. Los primeros mensajes pueden fallar unos minutos.';
 
   const faltan = [];
   try {
@@ -85,6 +89,10 @@ function instalar() {
 
   console.log([
     'Listo. Todo instalado y ' + estadoGemini,
+    '',
+    'Modelos:',
+    pruebas.map(function (p) { return '  ' + p.linea; }).join('\n'),
+    disponibles.length ? '  (Google ofrece ' + disponibles.length + ' modelos a esta clave.)' : '',
     faltan.length
       ? '\nATENCIÓN: no pude usar ' + faltan.join(' ni ') + '. Habilitala en el proyecto de Google Cloud y volvé a correr instalar. Mientras tanto, las tareas se anotan igual.'
       : '',
@@ -94,4 +102,22 @@ function instalar() {
     '',
     'Paso siguiente: compartí la carpeta "Asistente" con quienes van a usarlo, como Editor.',
   ].join('\n'));
+}
+
+/**
+ * Prueba un modelo con un pedido mínimo y dice cuánto tardó. Un modelo que no
+ * existe o fue retirado frena la instalación; uno saturado, no.
+ */
+function probarModelo_(modelo, propiedad) {
+  const inicio = Date.now();
+  const r = pedirGemini_(modelo, [{ text: 'Respondé con ok en true.' }], generacionPara_(modelo,
+    { type: 'OBJECT', properties: { ok: { type: 'BOOLEAN' } }, required: ['ok'] }, {}));
+  const segundos = Math.round((Date.now() - inicio) / 100) / 10;
+  const codigo = r.getResponseCode();
+  if (codigo === 200) return { ok: true, linea: modelo + ': respondió en ' + segundos + ' s' };
+  if (esErrorPasajero(codigo) || codigo === 429) {
+    return { ok: false, linea: modelo + ': saturado (' + codigo + ', a los ' + segundos + ' s)' };
+  }
+  if (codigo === 404) throw new Error(mensajeModeloRetirado(modelo, r.getContentText(), propiedad));
+  throw new Error('Gemini respondió ' + codigo + ' con ' + modelo + ': ' + r.getContentText().slice(0, 300));
 }

@@ -144,7 +144,7 @@ function escribirMinuta_(r) {
       nota: r.nota,
       personas: gente.map(function (p) { return p.nombre; }),
     }),
-  }], ESQUEMA_MINUTA, { razonamiento: 1024 });
+  }], ESQUEMA_MINUTA, { uso: 'reunion', razonamiento: 1024 });
   const m = respuesta.datos;
   // Lo que cobró Gemini dice la duración exacta; lo que estima el modelo, no.
   const duracion = minutosDeAudio(respuesta.uso) || Number(m.duracionMinutos) || 60;
@@ -239,7 +239,7 @@ function transcribirTramo_(r) {
       hasta: hasta,
       participantes: r.participantes ? r.participantes.split(', ') : [],
     }),
-  }], ESQUEMA_TRAMO, { razonamiento: 0, maxTokens: 16384 });
+  }], ESQUEMA_TRAMO, { uso: 'reunion', razonamiento: 0, maxTokens: 16384 });
 
   const texto = renderizarTurnos(t.turnos);
   if (texto) {

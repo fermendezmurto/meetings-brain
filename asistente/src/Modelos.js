@@ -26,11 +26,12 @@ function configRazonamiento(modelo, presupuesto) {
  * Google retira modelos cada tanto, y cuando lo hace el error dice cuál usar.
  * Se traduce a qué tocar, para que no haga falta cambiar código.
  */
-function mensajeModeloRetirado(modelo, cuerpo) {
+function mensajeModeloRetirado(modelo, cuerpo, propiedad) {
+  propiedad = propiedad || 'GEMINI_MODEL';
   const sugerido = (String(cuerpo).match(/use (?:models\/)?(gemini-[\w.-]*[\w])/i) || [])[1];
   return 'Google retiró el modelo ' + modelo + '. ' + (sugerido
-    ? 'En Propiedades del script, poné GEMINI_MODEL = ' + sugerido + ' y volvé a probar.'
-    : 'En Propiedades del script, cambiá GEMINI_MODEL por un modelo vigente.');
+    ? 'En Propiedades del script, poné ' + propiedad + ' = ' + sugerido + ' y volvé a probar.'
+    : 'En Propiedades del script, cambiá ' + propiedad + ' por un modelo vigente.');
 }
 
 /**
@@ -43,12 +44,43 @@ function esErrorPasajero(codigo) {
 }
 
 /**
- * Reintentar solo sirve si el fallo fue rápido. Si Gemini tardó en rechazar el
- * pedido, reintentar pasaría el límite de 30 segundos de Chat y el de 60 de
- * Apps Script, y la persona se quedaría sin ninguna respuesta.
+ * Cuánto hace falta para que un segundo intento tenga chance de terminar. Una
+ * nota con el modelo liviano suele contestar bastante antes.
  */
-function convieneReintentar(codigo, milisegundos) {
-  return esErrorPasajero(codigo) && milisegundos < 10000;
+const MARGEN_REINTENTO_MS = 8000;
+
+/**
+ * Se reintenta si el error es pasajero y queda tiempo. Lo que importa no es
+ * cuánto tardó el primer intento sino cuánto falta para el corte: en la primera
+ * prueba real, Google tardó en decir "saturado" y una regla basada en la
+ * demora del primer intento dejó afuera justo ese caso.
+ *
+ * @param {number|undefined} restanteMs hasta el corte; sin corte, siempre hay tiempo
+ */
+function convieneReintentar(codigo, restanteMs) {
+  if (!esErrorPasajero(codigo)) return false;
+  return restanteMs === undefined || restanteMs > MARGEN_REINTENTO_MS;
+}
+
+/**
+ * De la lista de modelos que devuelve Google, el liviano más nuevo: el que
+ * mejor aguanta la saturación y el que alcanza para entender una nota. Se
+ * prefieren las versiones estables a las de prueba.
+ */
+function elegirModeloLiviano(nombres) {
+  const candidatos = nombres
+    .map(function (n) { return String(n).replace(/^models\//, ''); })
+    .map(function (n) {
+      const m = n.match(/^gemini-(\d+(?:\.\d+)?)-flash-lite(-preview)?$/);
+      return m ? { nombre: n, version: Number(m[1]), estable: !m[2] } : null;
+    })
+    .filter(function (x) { return x; });
+  if (!candidatos.length) return '';
+  candidatos.sort(function (a, b) {
+    if (a.estable !== b.estable) return a.estable ? -1 : 1;
+    return b.version - a.version;
+  });
+  return candidatos[0].nombre;
 }
 
 /**

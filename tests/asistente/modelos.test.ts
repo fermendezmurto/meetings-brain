@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { cargar, TODOS } from './cargar'
 
-const { configRazonamiento, modeloDeRespaldo, mensajeModeloRetirado, esErrorPasajero, convieneReintentar } = cargar(...TODOS)
+const { configRazonamiento, modeloDeRespaldo, elegirModeloLiviano, mensajeModeloRetirado, esErrorPasajero, convieneReintentar } = cargar(...TODOS)
 
 describe('configRazonamiento', () => {
   it('a la familia 2.5 Flash le acota el razonamiento con un presupuesto', () => {
@@ -25,6 +25,11 @@ describe('configRazonamiento', () => {
 })
 
 describe('mensajeModeloRetirado', () => {
+  it('nombra la propiedad que corresponde al modelo retirado', () => {
+    expect(mensajeModeloRetirado('gemini-x-lite', 'use models/gemini-y-lite', 'GEMINI_MODEL_NOTAS'))
+      .toContain('poné GEMINI_MODEL_NOTAS = gemini-y-lite')
+  })
+
   it('traduce el error de Google a qué tocar', () => {
     // El mensaje real que devolvió Google al instalar.
     const cuerpo = JSON.stringify({
@@ -50,12 +55,14 @@ describe('errores pasajeros', () => {
     expect([400, 401, 403, 404, 429].some(esErrorPasajero)).toBe(false)
   })
 
-  it('se reintenta solo si el fallo fue rápido, para no pasar el límite de Chat', () => {
-    expect(convieneReintentar(503, 800)).toBe(true)
-    // El 503 real que devolvió Google tardó bastante: reintentar ahí deja a la
-    // persona sin respuesta.
-    expect(convieneReintentar(503, 30000)).toBe(false)
-    expect(convieneReintentar(400, 800)).toBe(false)
+  it('se reintenta si queda tiempo antes del corte, no según cuánto tardó el primer intento', () => {
+    // En la primera prueba real Google tardó en decir "saturado", y la regla
+    // anterior, basada en esa demora, dejó afuera al respaldo justo ahí.
+    expect(convieneReintentar(503, 12000)).toBe(true)
+    expect(convieneReintentar(503, 3000)).toBe(false)
+    // Sin corte, como en las reuniones, siempre hay tiempo.
+    expect(convieneReintentar(503, undefined)).toBe(true)
+    expect(convieneReintentar(400, 20000)).toBe(false)
   })
 })
 
@@ -66,5 +73,23 @@ describe('modeloDeRespaldo', () => {
     expect(modeloDeRespaldo('gemini-3.6-flash', 'ninguno')).toBe('')
     expect(modeloDeRespaldo('gemini-3.6-flash', 'Ninguno')).toBe('')
     expect(modeloDeRespaldo('gemini-3.6-flash', '')).toBe('')
+  })
+})
+
+describe('elegirModeloLiviano', () => {
+  it('elige el liviano estable más nuevo de la lista de Google', () => {
+    expect(elegirModeloLiviano([
+      'models/gemini-3.6-flash', 'models/gemini-3.5-flash-lite', 'models/gemini-2.5-flash-lite',
+      'models/gemini-3.9-flash-lite-preview', 'models/gemini-3.8-flash',
+    ])).toBe('gemini-3.5-flash-lite')
+  })
+
+  it('si solo hay versiones de prueba, usa la más nueva', () => {
+    expect(elegirModeloLiviano(['models/gemini-3.9-flash-lite-preview', 'models/gemini-3.7-flash-lite-preview']))
+      .toBe('gemini-3.9-flash-lite-preview')
+  })
+
+  it('si no hay ninguno liviano, no inventa', () => {
+    expect(elegirModeloLiviano(['models/gemini-3.6-flash'])).toBe('')
   })
 })

@@ -15,9 +15,10 @@
  *   GEMINI_API_KEY   obligatoria. La clave de aistudio.google.com.
  *   GEMINI_MODEL     opcional. Por defecto gemini-3.6-flash. Si Google retira un
  *                    modelo, el error dice cuál poner acá.
- *   GEMINI_MODEL_RESPALDO opcional. El modelo que se prueba cuando el principal
- *                    está saturado. Por defecto gemini-3.5-flash-lite; "ninguno"
- *                    lo apaga.
+ *   GEMINI_MODEL_NOTAS  el modelo liviano que atiende Chat. Lo elige instalar()
+ *                    entre los que Google ofrece a la clave.
+ *   GEMINI_MODEL_RESPALDO opcional. El que se prueba cuando el de las reuniones
+ *                    está saturado. Por defecto, el de notas; "ninguno" lo apaga.
  *   CARPETA_ID       la completa instalar().
  *   BASE_ID          la completa instalar().
  */
@@ -25,10 +26,25 @@
 const ZONA = 'America/Asuncion';
 const MODELO_POR_DEFECTO = 'gemini-3.6-flash';
 /**
- * La variante liviana: más barata y, cuando el modelo principal se satura,
- * suele seguir respondiendo.
+ * La variante liviana: más rápida, más barata y la que menos se satura. Es la
+ * que atiende Chat, donde alguien espera la respuesta. Si instalar() no pudo
+ * consultar la lista de Google, se usa esta.
  */
-const RESPALDO_POR_DEFECTO = 'gemini-3.5-flash-lite';
+const LIVIANO_POR_DEFECTO = 'gemini-3.5-flash-lite';
+
+/** Modelos para cada uso: el primero que se intenta y el de respaldo. */
+function modelosPara_(uso) {
+  const grande = prop_('GEMINI_MODEL', MODELO_POR_DEFECTO);
+  const liviano = prop_('GEMINI_MODEL_NOTAS', LIVIANO_POR_DEFECTO);
+  if (uso === 'nota') {
+    return { principal: liviano, propiedad: 'GEMINI_MODEL_NOTAS', respaldo: modeloDeRespaldo(liviano, grande) };
+  }
+  return {
+    principal: grande,
+    propiedad: 'GEMINI_MODEL',
+    respaldo: modeloDeRespaldo(grande, prop_('GEMINI_MODEL_RESPALDO', liviano)),
+  };
+}
 
 /**
  * Hasta este tamaño un audio es una nota de voz y se contesta en el momento.
@@ -94,11 +110,12 @@ function configRazonamiento(modelo, presupuesto) {
  * Google retira modelos cada tanto, y cuando lo hace el error dice cuál usar.
  * Se traduce a qué tocar, para que no haga falta cambiar código.
  */
-function mensajeModeloRetirado(modelo, cuerpo) {
+function mensajeModeloRetirado(modelo, cuerpo, propiedad) {
+  propiedad = propiedad || 'GEMINI_MODEL';
   const sugerido = (String(cuerpo).match(/use (?:models\/)?(gemini-[\w.-]*[\w])/i) || [])[1];
   return 'Google retiró el modelo ' + modelo + '. ' + (sugerido
-    ? 'En Propiedades del script, poné GEMINI_MODEL = ' + sugerido + ' y volvé a probar.'
-    : 'En Propiedades del script, cambiá GEMINI_MODEL por un modelo vigente.');
+    ? 'En Propiedades del script, poné ' + propiedad + ' = ' + sugerido + ' y volvé a probar.'
+    : 'En Propiedades del script, cambiá ' + propiedad + ' por un modelo vigente.');
 }
 
 /**
@@ -111,12 +128,43 @@ function esErrorPasajero(codigo) {
 }
 
 /**
- * Reintentar solo sirve si el fallo fue rápido. Si Gemini tardó en rechazar el
- * pedido, reintentar pasaría el límite de 30 segundos de Chat y el de 60 de
- * Apps Script, y la persona se quedaría sin ninguna respuesta.
+ * Cuánto hace falta para que un segundo intento tenga chance de terminar. Una
+ * nota con el modelo liviano suele contestar bastante antes.
  */
-function convieneReintentar(codigo, milisegundos) {
-  return esErrorPasajero(codigo) && milisegundos < 10000;
+const MARGEN_REINTENTO_MS = 8000;
+
+/**
+ * Se reintenta si el error es pasajero y queda tiempo. Lo que importa no es
+ * cuánto tardó el primer intento sino cuánto falta para el corte: en la primera
+ * prueba real, Google tardó en decir "saturado" y una regla basada en la
+ * demora del primer intento dejó afuera justo ese caso.
+ *
+ * @param {number|undefined} restanteMs hasta el corte; sin corte, siempre hay tiempo
+ */
+function convieneReintentar(codigo, restanteMs) {
+  if (!esErrorPasajero(codigo)) return false;
+  return restanteMs === undefined || restanteMs > MARGEN_REINTENTO_MS;
+}
+
+/**
+ * De la lista de modelos que devuelve Google, el liviano más nuevo: el que
+ * mejor aguanta la saturación y el que alcanza para entender una nota. Se
+ * prefieren las versiones estables a las de prueba.
+ */
+function elegirModeloLiviano(nombres) {
+  const candidatos = nombres
+    .map(function (n) { return String(n).replace(/^models\//, ''); })
+    .map(function (n) {
+      const m = n.match(/^gemini-(\d+(?:\.\d+)?)-flash-lite(-preview)?$/);
+      return m ? { nombre: n, version: Number(m[1]), estable: !m[2] } : null;
+    })
+    .filter(function (x) { return x; });
+  if (!candidatos.length) return '';
+  candidatos.sort(function (a, b) {
+    if (a.estable !== b.estable) return a.estable ? -1 : 1;
+    return b.version - a.version;
+  });
+  return candidatos[0].nombre;
 }
 
 /**
@@ -1055,7 +1103,9 @@ function claveGemini_() {
  *
  * @param {Object[]} partes     texto, audio incrustado o referencia a un archivo
  * @param {Object}   esquema    la forma exacta de la respuesta
- * @param {Object}   opciones   maxTokens; razonamiento, el tope de lo que el
+ * @param {Object}   opciones   uso: 'nota' (Chat, alguien esperando) o
+ *                              'reunion'; hasta: momento de corte en ms;
+ *                              maxTokens; razonamiento, el tope de lo que el
  *                              modelo puede "pensar" antes de contestar
  */
 function geminiJson_(partes, esquema, opciones) {
@@ -1065,22 +1115,22 @@ function geminiJson_(partes, esquema, opciones) {
 /** Igual que geminiJson_, pero devuelve además lo que cobró Gemini. */
 function geminiConUso_(partes, esquema, opciones) {
   opciones = opciones || {};
-  const modelo = prop_('GEMINI_MODEL', MODELO_POR_DEFECTO);
+  const modelos = modelosPara_(opciones.uso);
+  const modelo = modelos.principal;
+  const restante = function () { return opciones.hasta ? opciones.hasta - Date.now() : undefined; };
 
-  let inicio = Date.now();
   let r = pedirConAjuste_(modelo, partes, esquema, opciones);
-  if (convieneReintentar(r.getResponseCode(), Date.now() - inicio)) {
-    const respaldo = modeloDeRespaldo(modelo, prop_('GEMINI_MODEL_RESPALDO', RESPALDO_POR_DEFECTO));
-    if (respaldo) {
+  if (convieneReintentar(r.getResponseCode(), restante())) {
+    if (modelos.respaldo) {
       // Otro modelo tiene otra capacidad: probarlo al toque tiene más chance
-      // que esperar a que se desature el principal.
-      const r2 = pedirConAjuste_(respaldo, partes, esquema, opciones);
+      // que esperar a que se desature el primero.
+      const r2 = pedirConAjuste_(modelos.respaldo, partes, esquema, opciones);
       if (r2.getResponseCode() === 200) {
         r = r2;
       } else {
         // Si el respaldo tampoco anda, o no existe, la persona igual recibe el
-        // aviso de saturación del principal, nunca un error técnico del respaldo.
-        console.error('El respaldo ' + respaldo + ' tampoco respondió (' + r2.getResponseCode() + '): ' +
+        // aviso de saturación, nunca un error técnico del respaldo.
+        console.error('El respaldo ' + modelos.respaldo + ' tampoco respondió (' + r2.getResponseCode() + '): ' +
           r2.getContentText().slice(0, 200));
       }
     } else {
@@ -1098,7 +1148,7 @@ function geminiConUso_(partes, esquema, opciones) {
     throw errorPasajero_('Gemini está saturado en este momento. Suele pasar unos minutos: probá de nuevo en un rato.');
   }
   if (codigo === 404 && /no longer available|not found/i.test(cuerpo)) {
-    throw new Error(mensajeModeloRetirado(modelo, cuerpo));
+    throw new Error(mensajeModeloRetirado(modelo, cuerpo, modelos.propiedad));
   }
   if (codigo !== 200) throw new Error('Gemini respondió ' + codigo + ': ' + cuerpo.slice(0, 400));
 
@@ -1226,6 +1276,28 @@ function encabezado_(respuesta, nombre) {
   const todos = respuesta.getAllHeaders();
   const clave = Object.keys(todos).filter(function (k) { return k.toLowerCase() === nombre; })[0];
   return clave ? String(todos[clave]) : '';
+}
+
+/**
+ * Los modelos que Google ofrece a esta clave. Sirve para no adivinar nombres:
+ * Google los cambia seguido y retira los viejos.
+ */
+function modelosDisponibles_() {
+  const nombres = [];
+  let pagina = '';
+  do {
+    const r = UrlFetchApp.fetch(GEMINI + '/v1beta/models?pageSize=1000' + (pagina ? '&pageToken=' + pagina : ''), {
+      headers: { 'x-goog-api-key': claveGemini_() },
+      muteHttpExceptions: true,
+    });
+    if (r.getResponseCode() !== 200) throw new Error('Google no devolvió la lista de modelos (' + r.getResponseCode() + ').');
+    const datos = JSON.parse(r.getContentText());
+    (datos.models || []).forEach(function (m) {
+      if ((m.supportedGenerationMethods || []).indexOf('generateContent') !== -1) nombres.push(m.name);
+    });
+    pagina = datos.nextPageToken || '';
+  } while (pagina);
+  return nombres;
 }
 
 // ===== Google.js =====
@@ -1461,7 +1533,11 @@ function avisoMatutino() {
  * quitado, comando) apunta a una función. Esta los atiende a todos, por si se
  * configuró una sola función común.
  */
+/** Cuándo empezó a atenderse el mensaje: Chat corta la espera a los 30 segundos. */
+let INICIO_MENSAJE_ = 0;
+
 function onMessage(e) {
+  INICIO_MENSAJE_ = Date.now();
   const evento = normalizarEvento(e);
   if (evento.tipo === 'ADDED_TO_SPACE') return onAddedToSpace(e);
   if (evento.tipo === 'REMOVED_FROM_SPACE') return onRemovedFromSpace(e);
@@ -1642,8 +1718,13 @@ function interpretarNota_(quien, entrada) {
     ? [parteAudioIncrustado_(entrada.audio, entrada.tipo), { text: prompt }]
     : [{ text: prompt }];
 
-  // Chat espera como mucho 30 segundos: se acota cuánto puede pensar el modelo.
-  const r = geminiJson_(partes, ESQUEMA_NOTA, { razonamiento: 512 });
+  // Chat espera como mucho 30 segundos: se acota cuánto puede pensar el modelo
+  // y se le avisa cuánto tiempo queda, para saber si da para un segundo intento.
+  const r = geminiJson_(partes, ESQUEMA_NOTA, {
+    uso: 'nota',
+    razonamiento: 512,
+    hasta: (INICIO_MENSAJE_ || Date.now()) + 27000,
+  });
 
   if (r.intencion === 'pendientes') return listarPendientes(pendientesDe_(quien.email), hoy);
   if (r.intencion === 'pedidos') return listarPedidos(pedidosDe_(quien.email), hoy);
@@ -1933,7 +2014,7 @@ function escribirMinuta_(r) {
       nota: r.nota,
       personas: gente.map(function (p) { return p.nombre; }),
     }),
-  }], ESQUEMA_MINUTA, { razonamiento: 1024 });
+  }], ESQUEMA_MINUTA, { uso: 'reunion', razonamiento: 1024 });
   const m = respuesta.datos;
   // Lo que cobró Gemini dice la duración exacta; lo que estima el modelo, no.
   const duracion = minutosDeAudio(respuesta.uso) || Number(m.duracionMinutos) || 60;
@@ -2028,7 +2109,7 @@ function transcribirTramo_(r) {
       hasta: hasta,
       participantes: r.participantes ? r.participantes.split(', ') : [],
     }),
-  }], ESQUEMA_TRAMO, { razonamiento: 0, maxTokens: 16384 });
+  }], ESQUEMA_TRAMO, { uso: 'reunion', razonamiento: 0, maxTokens: 16384 });
 
   const texto = renderizarTurnos(t.turnos);
   if (texto) {
@@ -2126,21 +2207,25 @@ function instalar() {
   ScriptApp.newTrigger('procesarReuniones').timeBased().everyMinutes(5).create();
   ScriptApp.newTrigger('avisoMatutino').timeBased().atHour(8).everyDays(1).inTimezone(ZONA).create();
 
-  // Una clave inválida o un modelo retirado frenan la instalación: hay que
-  // corregirlos. Que el modelo esté saturado, no: Google ya aceptó la clave
-  // para llegar a decir eso, y se arregla solo.
-  let estadoGemini = 'la clave de Gemini funciona.';
+  // Qué modelos ofrece Google a esta clave, para no adivinar nombres.
+  let disponibles = [];
   try {
-    const prueba = geminiJson_(
-      [{ text: 'Respondé con ok en true.' }],
-      { type: 'OBJECT', properties: { ok: { type: 'BOOLEAN' } }, required: ['ok'] }
-    );
-    if (!prueba.ok) throw new Error('Gemini respondió, pero no lo esperado: ' + JSON.stringify(prueba));
+    disponibles = modelosDisponibles_();
+    const liviano = elegirModeloLiviano(disponibles);
+    if (liviano && !prop_('GEMINI_MODEL_NOTAS')) props.setProperty('GEMINI_MODEL_NOTAS', liviano);
   } catch (err) {
-    if (!err.pasajero) throw err;
-    estadoGemini = 'Google aceptó la clave, pero Gemini está saturado en este momento. ' +
-      'Los primeros mensajes pueden fallar unos minutos.';
+    console.error(err);
   }
+
+  // Una clave inválida o un modelo retirado frenan la instalación: hay que
+  // corregirlos. Que un modelo esté saturado, no: Google ya aceptó la clave
+  // para llegar a decir eso, y se arregla solo.
+  const pruebas = [modelosPara_('nota'), modelosPara_('reunion')]
+    .filter(function (m, i, todos) { return i === 0 || m.principal !== todos[0].principal; })
+    .map(function (m) { return probarModelo_(m.principal, m.propiedad); });
+  const estadoGemini = pruebas.some(function (p) { return p.ok; })
+    ? 'la clave de Gemini funciona.'
+    : 'Google aceptó la clave, pero Gemini está saturado en este momento. Los primeros mensajes pueden fallar unos minutos.';
 
   const faltan = [];
   try {
@@ -2156,6 +2241,10 @@ function instalar() {
 
   console.log([
     'Listo. Todo instalado y ' + estadoGemini,
+    '',
+    'Modelos:',
+    pruebas.map(function (p) { return '  ' + p.linea; }).join('\n'),
+    disponibles.length ? '  (Google ofrece ' + disponibles.length + ' modelos a esta clave.)' : '',
     faltan.length
       ? '\nATENCIÓN: no pude usar ' + faltan.join(' ni ') + '. Habilitala en el proyecto de Google Cloud y volvé a correr instalar. Mientras tanto, las tareas se anotan igual.'
       : '',
@@ -2165,4 +2254,22 @@ function instalar() {
     '',
     'Paso siguiente: compartí la carpeta "Asistente" con quienes van a usarlo, como Editor.',
   ].join('\n'));
+}
+
+/**
+ * Prueba un modelo con un pedido mínimo y dice cuánto tardó. Un modelo que no
+ * existe o fue retirado frena la instalación; uno saturado, no.
+ */
+function probarModelo_(modelo, propiedad) {
+  const inicio = Date.now();
+  const r = pedirGemini_(modelo, [{ text: 'Respondé con ok en true.' }], generacionPara_(modelo,
+    { type: 'OBJECT', properties: { ok: { type: 'BOOLEAN' } }, required: ['ok'] }, {}));
+  const segundos = Math.round((Date.now() - inicio) / 100) / 10;
+  const codigo = r.getResponseCode();
+  if (codigo === 200) return { ok: true, linea: modelo + ': respondió en ' + segundos + ' s' };
+  if (esErrorPasajero(codigo) || codigo === 429) {
+    return { ok: false, linea: modelo + ': saturado (' + codigo + ', a los ' + segundos + ' s)' };
+  }
+  if (codigo === 404) throw new Error(mensajeModeloRetirado(modelo, r.getContentText(), propiedad));
+  throw new Error('Gemini respondió ' + codigo + ' con ' + modelo + ': ' + r.getContentText().slice(0, 300));
 }

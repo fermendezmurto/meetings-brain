@@ -56,6 +56,29 @@ describe('instalar', () => {
     expect(g.disparadores).toHaveLength(2)
   })
 
+  it('elige el modelo liviano entre los que Google ofrece a la clave, sin adivinar nombres', () => {
+    const g = crearGoogle({ ahora: AHORA, guion: { modelosDisponibles: ['gemini-3.8-flash', 'gemini-3.9-flash-lite-preview', 'gemini-3.7-flash-lite'] } })
+    g.props.set('GEMINI_API_KEY', 'AQ.x')
+    g.llamar('instalar')
+    expect(g.props.get('GEMINI_MODEL_NOTAS')).toBe('gemini-3.7-flash-lite')
+  })
+
+  it('no pisa el modelo que alguien eligió a mano', () => {
+    const g = crearGoogle({ ahora: AHORA })
+    g.props.set('GEMINI_API_KEY', 'AQ.x')
+    g.props.set('GEMINI_MODEL_NOTAS', 'gemini-3.6-flash')
+    g.llamar('instalar')
+    expect(g.props.get('GEMINI_MODEL_NOTAS')).toBe('gemini-3.6-flash')
+  })
+
+  it('si no puede consultar la lista de modelos, instala igual con el liviano por defecto', () => {
+    const g = crearGoogle({ ahora: AHORA, guion: { modelosDisponibles: null } })
+    g.props.set('GEMINI_API_KEY', 'AQ.x')
+    expect(() => g.llamar('instalar')).not.toThrow()
+    expect(g.pedidosGemini.filter((p) => p.tipo === 'prueba').map((p) => p.url.match(/models\/([^:]+)/)![1]))
+      .toEqual(['gemini-3.5-flash-lite', 'gemini-3.6-flash'])
+  })
+
   it('si Gemini está saturado al instalar, queda instalado igual y lo advierte', () => {
     const g = crearGoogle({ ahora: AHORA, guion: { fallaGemini: () => 503 } })
     g.props.set('GEMINI_API_KEY', 'AQ.x')
@@ -81,7 +104,7 @@ describe('instalar', () => {
 
   it('usa el modelo que diga la propiedad, y le acota el razonamiento a su manera', () => {
     const g = instalado({ nota: { intencion: 'pendientes', respuesta: '', tareas: [] } })
-    g.props.set('GEMINI_MODEL', 'gemini-2.5-flash')
+    g.props.set('GEMINI_MODEL_NOTAS', 'gemini-2.5-flash')
     escribir(g, FER, 'anotame algo')
     const pedido = g.pedidosGemini.at(-1)!
     expect(pedido.url).toContain('models/gemini-2.5-flash:')
@@ -218,20 +241,29 @@ describe('conversación', () => {
     )
   })
 
-  it('si el modelo principal está saturado, contesta con el de respaldo', () => {
+  it('en Chat contesta primero el modelo liviano, que es el más rápido y el que menos se satura', () => {
+    const g = instalado({ nota: { intencion: 'pendientes', respuesta: '', tareas: [] } })
+    escribir(g, FER, 'anotame algo')
+    const notas = g.pedidosGemini.filter((p) => p.tipo === 'nota')
+    expect(notas).toHaveLength(1)
+    expect(notas[0].url).toContain('models/gemini-3.5-flash-lite:')
+  })
+
+  it('si el liviano está saturado, contesta el grande', () => {
     const g = instalado({
       nota: { intencion: 'pendientes', respuesta: '', tareas: [] },
-      fallaGemini: (t: string, modelo: string) => (t === 'nota' && modelo === 'gemini-3.6-flash' ? 503 : undefined),
+      fallaGemini: (t: string, modelo: string) => (t === 'nota' && modelo === 'gemini-3.5-flash-lite' ? 503 : undefined),
     })
     expect(escribir(g, FER, 'anotame algo')).toBe('No tenés nada pendiente.')
-    expect(g.pedidosGemini.at(-1)!.url).toContain('models/gemini-3.5-flash-lite:')
+    expect(g.pedidosGemini.at(-1)!.url).toContain('models/gemini-3.6-flash:')
   })
 
   it('si el respaldo no existe, igual avisa la saturación y no un error técnico', () => {
     const g = instalado({
-      modelosRetirados: ['gemini-3.5-flash-lite'],
-      fallaGemini: (t: string, modelo: string) => (t === 'nota' && modelo === 'gemini-3.6-flash' ? 503 : undefined),
+      modelosRetirados: ['gemini-9-flash'],
+      fallaGemini: (t: string, modelo: string) => (t === 'nota' && modelo === 'gemini-3.5-flash-lite' ? 503 : undefined),
     })
+    g.props.set('GEMINI_MODEL', 'gemini-9-flash')
     const r = escribir(g, FER, 'anotame algo')
     expect(r).toContain('Gemini está saturado')
     expect(r).not.toContain('404')
@@ -240,19 +272,19 @@ describe('conversación', () => {
   it('si el respaldo no acepta el parámetro de razonamiento, se le pide sin él', () => {
     const g = instalado({
       nota: { intencion: 'pendientes', respuesta: '', tareas: [] },
-      rechazaRazonamientoEn: ['gemini-3.5-flash-lite'],
-      fallaGemini: (t: string, modelo: string) => (t === 'nota' && modelo === 'gemini-3.6-flash' ? 503 : undefined),
+      rechazaRazonamientoEn: ['gemini-3.6-flash'],
+      fallaGemini: (t: string, modelo: string) => (t === 'nota' && modelo === 'gemini-3.5-flash-lite' ? 503 : undefined),
     })
     expect(escribir(g, FER, 'anotame algo')).toBe('No tenés nada pendiente.')
   })
 
-  it('con el respaldo apagado, reintenta el mismo modelo', () => {
+  it('con un solo modelo para todo, reintenta el mismo', () => {
     let fallas = 1
     const g = instalado({
       nota: { intencion: 'pendientes', respuesta: '', tareas: [] },
       fallaGemini: (t: string) => (t === 'nota' && fallas-- > 0 ? 503 : undefined),
     })
-    g.props.set('GEMINI_MODEL_RESPALDO', 'ninguno')
+    g.props.set('GEMINI_MODEL_NOTAS', 'gemini-3.6-flash')
     expect(escribir(g, FER, 'anotame algo')).toBe('No tenés nada pendiente.')
     expect(g.pedidosGemini.filter((p) => p.tipo === 'nota').every((p) => p.url.includes('gemini-3.6-flash:'))).toBe(true)
   })
@@ -464,7 +496,7 @@ describe('reuniones', () => {
     const r = escribir(g, FER, 'reunión de seguimiento con Diana', [g.subirAChat(5 * 1024 * 1024)])
     expect(r).toContain('Recibí la reunión (5 MB)')
     expect(g.hoja('Reuniones')[1][9]).toBe('recibida')
-    expect(g.pedidosGemini.filter((p) => p.tipo !== 'prueba')).toHaveLength(0)
+    expect(g.pedidosGemini.filter((p) => !['prueba', 'lista-modelos'].includes(p.tipo))).toHaveLength(0)
   })
 
   it('la minuta sale primero y en un solo pedido, con las tareas repartidas', () => {
@@ -591,6 +623,16 @@ describe('reuniones', () => {
     const aviso = g.correos.at(-1)
     expect(aviso.body).toContain('Intenté 12 veces')
     expect(aviso.body).toContain('saturado')
+  })
+
+  it('si el modelo grande está saturado, la minuta sale igual con el liviano', () => {
+    const g = reunionEnCola({
+      minuta: MINUTA, minutosDeAudio: 5, tramo: { turnos: [] },
+      fallaGemini: (t: string, modelo: string) => (t === 'minuta' && modelo === 'gemini-3.6-flash' ? 503 : undefined),
+    })
+    g.llamar('procesarReuniones')
+    expect(['transcribiendo', 'completa']).toContain(fila(g)[9])
+    expect(g.pedidosGemini.filter((p) => p.tipo === 'minuta').at(-1)!.url).toContain('gemini-3.5-flash-lite')
   })
 
   it('si la saturación se pasa, la reunión sale sin que nadie haga nada', () => {
