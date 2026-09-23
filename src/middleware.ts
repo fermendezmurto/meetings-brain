@@ -29,5 +29,5 @@ export async function middleware(pedido: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/api/recordings/:path*', '/grabar', '/r/:path*'],
+  matcher: ['/api/recordings/:path*', '/api/people', '/grabar', '/r/:path*'],
 }

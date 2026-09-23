@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
+import { agregarPersona } from '@/lib/personas'
 import { exigirSesion } from '@/lib/session'
 import { confirmarHablante } from '@/lib/speakers'
 import { actualizar, leer } from '@/lib/store'
@@ -29,6 +30,10 @@ export async function POST(
   if (!Number.isInteger(hablante)) {
     return NextResponse.json({ error: 'Falta el numero de hablante' }, { status: 400 })
   }
+
+  // Un nombre que una persona confirmo vale para toda la empresa: entra a la
+  // lista y queda disponible para elegir en la proxima reunion.
+  if (nombre?.trim()) await agregarPersona(nombre)
 
   const actualizada = await actualizar(id, (x) => ({
     ...x,

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
 import { enModoPrueba } from '@/lib/config'
+import { agregarPersona } from '@/lib/personas'
 import { urlDeLogin } from '@/lib/google'
 import { COOKIE_ESTADO } from '@/lib/cookie'
 import { COOKIE, firmar, nuevoSid } from '@/lib/session'
@@ -12,6 +13,7 @@ export async function GET() {
   // Sin credenciales de Google se entra como usuario de prueba, para poder
   // recorrer la app entera sin configurar nada.
   if (enModoPrueba()) {
+    await agregarPersona('Usuario de prueba')
     galletas.set(
       COOKIE,
       await firmar({

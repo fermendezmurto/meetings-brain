@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import SelectorPersonas from './SelectorPersonas'
 
 type Estado = 'inicio' | 'pidiendo' | 'grabando' | 'pausada' | 'cerrando'
 
@@ -28,7 +29,7 @@ export default function Grabador() {
   const router = useRouter()
   const [estado, setEstado] = useState<Estado>('inicio')
   const [titulo, setTitulo] = useState('')
-  const [invitados, setInvitados] = useState('')
+  const [invitados, setInvitados] = useState<string[]>([])
   const [segundos, setSegundos] = useState(0)
   const [pendientes, setPendientes] = useState(0)
   const [error, setError] = useState('')
@@ -99,14 +100,7 @@ export default function Grabador() {
       const r = await fetch('/api/recordings', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          titulo,
-          mimeType: formato,
-          participantes: invitados
-            .split(',')
-            .map((x) => x.trim())
-            .filter(Boolean),
-        }),
+        body: JSON.stringify({ titulo, mimeType: formato, participantes: invitados }),
       })
       if (!r.ok) throw new Error('No se pudo abrir la grabación.')
       grabacionId.current = ((await r.json()) as { id: string }).id
@@ -211,17 +205,9 @@ export default function Grabador() {
             onChange={(e) => setTitulo(e.target.value)}
             placeholder="Revisión semanal de producto"
           />
-          <p className="suave" style={{ marginTop: 16 }}>
-            Quiénes están, separados por coma (opcional)
-          </p>
-          <input
-            value={invitados}
-            onChange={(e) => setInvitados(e.target.value)}
-            placeholder="Juan Antonio, Diana, Christian"
-          />
-          <p className="suave" style={{ marginTop: 8, marginBottom: 0 }}>
-            Poner los nombres ayuda a que la minuta sepa quién dijo qué.
-          </p>
+          <div style={{ marginTop: 20 }}>
+            <SelectorPersonas seleccionados={invitados} alCambiar={setInvitados} />
+          </div>
         </div>
         {error && <p className="aviso">{error}</p>}
         <button className="boton" onClick={arrancar} disabled={estado === 'pidiendo'}>

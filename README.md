@@ -79,6 +79,19 @@ Deepgram y AssemblyAI quedan como alternativa por una razón concreta: separan
 mejor las voces que Gemini cuando hay muchas personas sobre un solo micrófono.
 Cuestan más. Se cambian con una variable, sin tocar código.
 
+## La lista de gente
+
+Al abrir una reunión se elige quiénes están tocando nombres, no escribiéndolos.
+La lista es común a toda la empresa y **se arma sola**: entra quien usa la app y
+entra cada nombre que alguien confirma al corregir una voz. Nadie mantiene una
+nómina.
+
+El campo para sumar a alguien sigue estando, porque a las reuniones también va
+gente de afuera: clientes, proveedores, el estudio jurídico.
+
+> En el plan gratuito de Render esta lista se pierde cuando el servicio se
+> duerme, igual que las grabaciones. Con un disco de verdad, queda.
+
 ## Quién dijo qué
 
 La transcripción devuelve voces numeradas, nunca nombres. El nombre sale de tres

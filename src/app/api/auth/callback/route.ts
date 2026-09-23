@@ -2,6 +2,7 @@ import { cookies } from 'next/headers'
 import { NextResponse, type NextRequest } from 'next/server'
 import { config } from '@/lib/config'
 import { canjearCodigo, perfil } from '@/lib/google'
+import { agregarPersona } from '@/lib/personas'
 import { COOKIE_ESTADO } from '@/lib/cookie'
 import { COOKIE, firmar, guardarTokens, nuevoSid } from '@/lib/session'
 
@@ -26,6 +27,9 @@ export async function GET(pedido: NextRequest) {
   if (config.dominioPermitido && quien.dominio !== config.dominioPermitido) {
     return error(`Esta app es solo para cuentas de ${config.dominioPermitido}`)
   }
+
+  // Quien entra queda en la lista: asi los demas pueden elegirlo sin escribirlo.
+  await agregarPersona(quien.nombre, { email: quien.email })
 
   const sid = nuevoSid()
   await guardarTokens(sid, {

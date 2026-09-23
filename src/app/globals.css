@@ -105,3 +105,24 @@ input, textarea {
 .lista li { padding: 10px 0; border-bottom: 1px solid var(--borde); }
 .lista li:last-child { border-bottom: 0; }
 .aviso { border-left: 3px solid var(--rojo); padding-left: 12px; }
+
+.fichas { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.ficha {
+  padding: 8px 14px;
+  border: 1px solid var(--borde);
+  border-radius: 999px;
+  background: var(--fondo);
+  color: var(--texto);
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+}
+.ficha.elegida {
+  background: var(--acento);
+  border-color: var(--acento);
+  color: #fff;
+  font-weight: 600;
+}
+/* El toque en el teléfono no deja hover: la única señal de estado es el color. */
+.ficha.elegida::before { content: '✓ '; }
