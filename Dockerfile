@@ -18,6 +18,10 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV DATA_DIR=/datos
 ENV PORT=3000
+# Docker define HOSTNAME solo, con el id del contenedor, y el servidor de Next
+# intenta escuchar justo ahi: el servicio arranca pero queda inalcanzable desde
+# afuera. Forzarlo a 0.0.0.0 es lo que lo hace visible.
+ENV HOSTNAME=0.0.0.0
 
 RUN addgroup -g 1001 -S nodejs && adduser -S next -u 1001 \
     && mkdir -p /datos && chown next:nodejs /datos
