@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { cargar, TODOS } from './cargar'
 
-const { formatearPlazo, fechaParaElModelo } = cargar(...TODOS)
+const { formatearPlazo, fechaParaElModelo, normalizarFecha } = cargar(...TODOS)
 
 // 2026-09-25 es viernes.
 const HOY = '2026-09-25'
@@ -34,5 +34,27 @@ describe('formatearPlazo', () => {
 describe('fechaParaElModelo', () => {
   it('le da al modelo el día de la semana, que es lo que necesita para "el viernes"', () => {
     expect(fechaParaElModelo(HOY)).toBe('viernes 25/09/2026')
+  })
+})
+
+describe('normalizarFecha', () => {
+  it('entiende las formas en que un modelo devuelve una fecha', () => {
+    expect(normalizarFecha('2026-09-25', HOY)).toBe('2026-09-25')
+    expect(normalizarFecha('2026-09-25T00:00:00Z', HOY)).toBe('2026-09-25')
+    expect(normalizarFecha('2026-9-5', HOY)).toBe('2026-09-05')
+    expect(normalizarFecha('25/09/2026', HOY)).toBe('2026-09-25')
+    expect(normalizarFecha('25/09/26', HOY)).toBe('2026-09-25')
+    expect(normalizarFecha(' 2/10 ', HOY)).toBe('2026-10-02')
+  })
+
+  it('sin año, una fecha que ya pasó es del año que viene', () => {
+    expect(normalizarFecha('15/01', '2026-12-20')).toBe('2027-01-15')
+  })
+
+  it('lo que no es una fecha, o no existe, queda vacío en vez de inventar', () => {
+    expect(normalizarFecha('el viernes', HOY)).toBe('')
+    expect(normalizarFecha('31/02/2026', HOY)).toBe('')
+    expect(normalizarFecha('', HOY)).toBe('')
+    expect(normalizarFecha(undefined, HOY)).toBe('')
   })
 })

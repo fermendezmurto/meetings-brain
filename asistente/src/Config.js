@@ -23,18 +23,37 @@ const MODELO_POR_DEFECTO = 'gemini-3.6-flash';
  */
 const LIVIANO_POR_DEFECTO = 'gemini-3.5-flash-lite';
 
-/** Modelos para cada uso: el primero que se intenta y el de respaldo. */
+/**
+ * Modelos para cada uso, en el orden en que se prueban.
+ *
+ * En Chat alguien está esperando: primero el que viene respondiendo más rápido
+ * según lo medido. En las reuniones nadie espera en vivo: primero el grande,
+ * por la calidad de la minuta, salvo que venga fallando.
+ */
 function modelosPara_(uso) {
   const grande = prop_('GEMINI_MODEL', MODELO_POR_DEFECTO);
   const liviano = prop_('GEMINI_MODEL_NOTAS', LIVIANO_POR_DEFECTO);
-  if (uso === 'nota') {
-    return { principal: liviano, propiedad: 'GEMINI_MODEL_NOTAS', respaldo: modeloDeRespaldo(liviano, grande) };
-  }
-  return {
-    principal: grande,
-    propiedad: 'GEMINI_MODEL',
-    respaldo: modeloDeRespaldo(grande, prop_('GEMINI_MODEL_RESPALDO', liviano)),
-  };
+  const respaldo = uso === 'nota' ? modeloDeRespaldo(grande, liviano)
+    : modeloDeRespaldo(grande, prop_('GEMINI_MODEL_RESPALDO', liviano));
+  const todos = [grande].concat(respaldo ? [respaldo] : []);
+  const propiedad = {};
+  propiedad[grande] = 'GEMINI_MODEL';
+  if (respaldo) propiedad[respaldo] = uso === 'nota' ? 'GEMINI_MODEL_NOTAS' : 'GEMINI_MODEL_RESPALDO';
+
+  const orden = uso === 'nota' ? ordenarPorDesempeno(todos, mediciones_(), Date.now()) : todos;
+  return { orden: orden, principal: orden[0], respaldo: orden[1] || '', propiedad: propiedad[orden[0]] };
+}
+
+/** Lo medido de cada modelo en la última media hora. */
+function mediciones_() {
+  const guardadas = CacheService.getScriptCache().get('mediciones');
+  return guardadas ? JSON.parse(guardadas) : {};
+}
+
+function medir_(modelo, ms, ok) {
+  const cache = CacheService.getScriptCache();
+  const m = registrarMedicion(mediciones_(), modelo, ms, ok, Date.now());
+  cache.put('mediciones', JSON.stringify(m), 3600);
 }
 
 /**

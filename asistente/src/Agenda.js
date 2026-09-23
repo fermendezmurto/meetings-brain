@@ -8,15 +8,15 @@
  * calendario, las tareas a su lista.
  */
 
-/** "17:00", "9:30". */
+/** "17:00", "9:30", y también "17:00:00", que es como a veces la devuelve el modelo. */
 function esHora(texto) {
-  return /^([01]?\d|2[0-3]):[0-5]\d$/.test(String(texto || ''));
+  return /^([01]?\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(String(texto || '').trim());
 }
 
-/** Siempre con dos dígitos: "9:30" pasa a "09:30". */
+/** Siempre HH:MM: "9:30" pasa a "09:30" y "17:00:00" a "17:00". */
 function normalizarHora(texto) {
   if (!esHora(texto)) return '';
-  const p = String(texto).split(':');
+  const p = String(texto).trim().split(':');
   return (p[0].length === 1 ? '0' : '') + p[0] + ':' + p[1];
 }
 

@@ -32,7 +32,14 @@ function geminiConUso_(partes, esquema, opciones) {
   const modelo = modelos.principal;
   const restante = function () { return opciones.hasta ? opciones.hasta - Date.now() : undefined; };
 
-  const turno = [modelo].concat(modelos.respaldo ? [modelos.respaldo] : []);
+  // Si todos vienen lentos o fallando, ni se intenta dentro de Chat: un pedido
+  // en curso no se puede cortar, y si pasa los 30 segundos la persona ve "no
+  // responde". Mejor contestar al toque y terminarlo después.
+  if (opciones.hasta && esperaEstimada(mediciones_()[modelo], Date.now()) > ESPERA_MAXIMA_EN_CHAT_MS) {
+    throw errorPasajero_('Gemini viene lento: lo dejo para terminar después.');
+  }
+
+  const turno = modelos.orden.slice();
   const maximo = opciones.hasta ? MAX_PEDIDOS_CON_CORTE : MAX_PEDIDOS_SIN_CORTE;
 
   let r = pedirConAjuste_(modelo, partes, esquema, opciones);
@@ -95,10 +102,20 @@ function errorPasajero_(mensaje) {
  * razonamiento, se pide de nuevo sin acotarlo. Más lento, pero contesta.
  */
 function pedirConAjuste_(modelo, partes, esquema, opciones) {
-  const r = pedirGemini_(modelo, partes, generacionPara_(modelo, esquema, opciones));
+  const inicio = Date.now();
+  let r = pedirGemini_(modelo, partes, generacionPara_(modelo, esquema, opciones));
   if (r.getResponseCode() === 400 && configRazonamiento(modelo, opciones.razonamiento) &&
       /thinking/i.test(r.getContentText())) {
-    return pedirGemini_(modelo, partes, generacionPara_(modelo, esquema, { maxTokens: opciones.maxTokens }));
+    r = pedirGemini_(modelo, partes, generacionPara_(modelo, esquema, { maxTokens: opciones.maxTokens }));
+  }
+  // Cada pedido deja su medición: así Chat sabe cuál modelo viene más rápido.
+  const codigo = r.getResponseCode();
+  if (codigo === 200 || esErrorPasajero(codigo) || codigo === 429) {
+    try {
+      medir_(modelo, Date.now() - inicio, codigo === 200);
+    } catch (err) {
+      console.error(err);
+    }
   }
   return r;
 }

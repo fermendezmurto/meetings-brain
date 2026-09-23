@@ -76,7 +76,7 @@ describe('instalar', () => {
     g.props.set('GEMINI_API_KEY', 'AQ.x')
     expect(() => g.llamar('instalar')).not.toThrow()
     expect(g.pedidosGemini.filter((p) => p.tipo === 'prueba').map((p) => p.url.match(/models\/([^:]+)/)![1]))
-      .toEqual(['gemini-3.5-flash-lite', 'gemini-3.6-flash'])
+      .toEqual(['gemini-3.6-flash', 'gemini-3.5-flash-lite'])
   })
 
   it('si Gemini está saturado al instalar, queda instalado igual y lo advierte', () => {
@@ -104,6 +104,7 @@ describe('instalar', () => {
 
   it('usa el modelo que diga la propiedad, y le acota el razonamiento a su manera', () => {
     const g = instalado({ nota: { intencion: 'pendientes', respuesta: '', tareas: [] } })
+    g.props.set('GEMINI_MODEL', 'gemini-2.5-flash')
     g.props.set('GEMINI_MODEL_NOTAS', 'gemini-2.5-flash')
     escribir(g, FER, 'anotame algo')
     const pedido = g.pedidosGemini.at(-1)!
@@ -240,21 +241,49 @@ describe('conversación', () => {
     expect(m[7]).toBe('pendiente')
   })
 
-  it('en Chat contesta primero el modelo liviano, que es el más rápido y el que menos se satura', () => {
-    const g = instalado({ nota: { intencion: 'pendientes', respuesta: '', tareas: [] } })
+  it('en Chat arranca por el modelo que viene respondiendo más rápido, según lo medido', () => {
+    // Lo que se midió en el piloto: el liviano tardó 37 segundos y el grande 7.
+    const g = instalado({
+      nota: { intencion: 'pendientes', respuesta: '', tareas: [] },
+      demora: (m: string) => (m === 'gemini-3.5-flash-lite' ? 36900 : 6900),
+    })
     escribir(g, FER, 'anotame algo')
     const notas = g.pedidosGemini.filter((p) => p.tipo === 'nota')
     expect(notas).toHaveLength(1)
-    expect(notas[0].url).toContain('models/gemini-3.5-flash-lite:')
+    expect(notas[0].url).toContain('models/gemini-3.6-flash:')
   })
 
-  it('si el liviano está saturado, contesta el grande', () => {
+  it('si todos vienen lentos, ni lo intenta en Chat: contesta al toque y lo termina después', () => {
+    const g = instalado({
+      nota: { intencion: 'anotar', respuesta: 'Anotado.', tareas: [{ tipo: 'tarea', que: 'Llamar al banco', responsable: '', plazo: '' }] },
+      demora: () => 20000,
+    })
+    expect(escribir(g, FER, 'recordame llamar al banco')).toContain('te confirmo por correo')
+    expect(g.pedidosGemini.filter((p) => p.tipo === 'nota')).toHaveLength(0)
+
+    g.llamar('procesarBandeja')
+    expect(g.hoja('Tareas').slice(1).map((t: any) => t[2])).toEqual(['Llamar al banco'])
+  })
+
+  it('si el primero está saturado, contesta el otro', () => {
     const g = instalado({
       nota: { intencion: 'pendientes', respuesta: '', tareas: [] },
-      fallaGemini: (t: string, modelo: string) => (t === 'nota' && modelo === 'gemini-3.5-flash-lite' ? 503 : undefined),
+      fallaGemini: (t: string, modelo: string) => (t === 'nota' && modelo === 'gemini-3.6-flash' ? 503 : undefined),
     })
     expect(escribir(g, FER, 'anotame algo')).toBe('No tenés nada pendiente.')
-    expect(g.pedidosGemini.at(-1)!.url).toContain('models/gemini-3.6-flash:')
+    expect(g.pedidosGemini.at(-1)!.url).toContain('models/gemini-3.5-flash-lite:')
+  })
+
+  it('el que acaba de fallar pasa al final de la fila en el mensaje siguiente', () => {
+    let fallasDelGrande = 1
+    const g = instalado({
+      nota: { intencion: 'pendientes', respuesta: '', tareas: [] },
+      fallaGemini: (t: string, m: string) => (t === 'nota' && m === 'gemini-3.6-flash' && fallasDelGrande-- > 0 ? 503 : undefined),
+    })
+    escribir(g, FER, 'anotame algo')
+    g.pedidosGemini.length = 0
+    escribir(g, FER, 'anotame otra cosa')
+    expect(g.pedidosGemini.filter((p) => p.tipo === 'nota')[0].url).toContain('gemini-3.5-flash-lite')
   })
 
   it('con saturación intermitente, alterna los modelos hasta que uno contesta', () => {
@@ -266,7 +295,7 @@ describe('conversación', () => {
     })
     expect(escribir(g, FER, 'anotame algo')).toBe('No tenés nada pendiente.')
     const modelos = g.pedidosGemini.filter((p) => p.tipo === 'nota').map((p) => p.url.match(/models\/([^:]+)/)![1])
-    expect(modelos).toEqual(['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.6-flash'])
+    expect(modelos).toEqual(['gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'])
   })
 
   it('si sigue saturado, deja de insistir en Chat con un tope', () => {
@@ -277,7 +306,7 @@ describe('conversación', () => {
 
   it('ante el límite de pedidos deja de insistir, porque insistir lo empeora', () => {
     const g = instalado({
-      fallaGemini: (t: string, modelo: string) => (t !== 'nota' ? undefined : modelo === 'gemini-3.5-flash-lite' ? 503 : 429),
+      fallaGemini: (t: string, modelo: string) => (t !== 'nota' ? undefined : modelo === 'gemini-3.6-flash' ? 503 : 429),
     })
     expect(escribir(g, FER, 'anotame algo')).toBe('Lo recibí, pero Gemini está lento en este momento. Lo termino de anotar en un par de minutos y te confirmo por correo.')
     expect(g.pedidosGemini.filter((p) => p.tipo === 'nota')).toHaveLength(2)
@@ -285,10 +314,10 @@ describe('conversación', () => {
 
   it('si el respaldo no existe, igual avisa la saturación y no un error técnico', () => {
     const g = instalado({
-      modelosRetirados: ['gemini-9-flash'],
-      fallaGemini: (t: string, modelo: string) => (t === 'nota' && modelo === 'gemini-3.5-flash-lite' ? 503 : undefined),
+      modelosRetirados: ['gemini-9-flash-lite'],
+      fallaGemini: (t: string, modelo: string) => (t === 'nota' && modelo === 'gemini-3.6-flash' ? 503 : undefined),
     })
-    g.props.set('GEMINI_MODEL', 'gemini-9-flash')
+    g.props.set('GEMINI_MODEL_NOTAS', 'gemini-9-flash-lite')
     const r = escribir(g, FER, 'anotame algo')
     expect(r).toBe('Lo recibí, pero Gemini está lento en este momento. Lo termino de anotar en un par de minutos y te confirmo por correo.')
     expect(r).not.toContain('404')
@@ -297,8 +326,8 @@ describe('conversación', () => {
   it('si el respaldo no acepta el parámetro de razonamiento, se le pide sin él', () => {
     const g = instalado({
       nota: { intencion: 'pendientes', respuesta: '', tareas: [] },
-      rechazaRazonamientoEn: ['gemini-3.6-flash'],
-      fallaGemini: (t: string, modelo: string) => (t === 'nota' && modelo === 'gemini-3.5-flash-lite' ? 503 : undefined),
+      rechazaRazonamientoEn: ['gemini-3.5-flash-lite'],
+      fallaGemini: (t: string, modelo: string) => (t === 'nota' && modelo === 'gemini-3.6-flash' ? 503 : undefined),
     })
     expect(escribir(g, FER, 'anotame algo')).toBe('No tenés nada pendiente.')
   })
@@ -380,6 +409,19 @@ describe('calendario y Google Tasks', () => {
   it('avisa a quién no pudo invitar porque no lo conoce', () => {
     const g = instalado(nota([{ tipo: 'evento', que: 'Llamada', responsable: '', plazo: '2026-09-26', hora: '10:00', participantes: ['Rodolfo'] }]))
     expect(escribir(g, FER, 'llamada con Rodolfo mañana a las 10')).toContain('No conozco a Rodolfo, así que no pude invitarlo.')
+  })
+
+  it('entiende la fecha aunque el modelo la devuelva en otro formato', () => {
+    // Lo que pasó en el piloto: "el viernes" quedó sin fecha.
+    const g = instalado(nota([{ tipo: 'tarea', que: 'Mandar la propuesta', responsable: '', plazo: '25/09/2026' }]))
+    expect(escribir(g, FER, 'recordame mandar la propuesta el viernes')).toContain('Mandar la propuesta — Fernando Méndez · hoy')
+    expect(g.tasksDe(FER.email)[0].due).toBe('2026-09-25T00:00:00.000Z')
+  })
+
+  it('una hora con segundos sigue siendo un evento a esa hora', () => {
+    const g = instalado(nota([{ tipo: 'evento', que: 'Llamada', responsable: '', plazo: '2026-09-26T00:00:00', hora: '13:00:00' }]))
+    escribir(g, FER, 'llamada mañana a la una')
+    expect(g.eventos[0].inicio.toISOString()).toBe('2026-09-26T16:00:00.000Z')
   })
 
   it('una tarea propia va directo a tu Google Tasks, con su fecha', () => {

@@ -69,9 +69,12 @@ function instalar() {
   // Una clave inválida o un modelo retirado frenan la instalación: hay que
   // corregirlos. Que un modelo esté saturado, no: Google ya aceptó la clave
   // para llegar a decir eso, y se arregla solo.
-  const pruebas = [modelosPara_('nota'), modelosPara_('reunion')]
-    .filter(function (m, i, todos) { return i === 0 || m.principal !== todos[0].principal; })
-    .map(function (m) { return probarModelo_(m.principal, m.propiedad); });
+  // Se prueban todos los que puede usar el Asistente. Lo que tardan queda como
+  // punto de partida para elegir en Chat el que viene más rápido.
+  const aProbar = modelosPara_('nota');
+  const pruebas = aProbar.orden.map(function (m) {
+    return probarModelo_(m, m === prop_('GEMINI_MODEL', MODELO_POR_DEFECTO) ? 'GEMINI_MODEL' : 'GEMINI_MODEL_NOTAS');
+  });
   const estadoGemini = pruebas.some(function (p) { return p.ok; })
     ? 'la clave de Gemini funciona.'
     : 'Google aceptó la clave, pero Gemini está saturado en este momento. Los primeros mensajes pueden fallar unos minutos.';
@@ -115,6 +118,7 @@ function probarModelo_(modelo, propiedad) {
     { type: 'OBJECT', properties: { ok: { type: 'BOOLEAN' } }, required: ['ok'] }, {}));
   const segundos = Math.round((Date.now() - inicio) / 100) / 10;
   const codigo = r.getResponseCode();
+  if (codigo === 200 || esErrorPasajero(codigo) || codigo === 429) medir_(modelo, Date.now() - inicio, codigo === 200);
   if (codigo === 200) return { ok: true, linea: modelo + ': respondió en ' + segundos + ' s' };
   if (esErrorPasajero(codigo) || codigo === 429) {
     return { ok: false, linea: modelo + ': saturado (' + codigo + ', a los ' + segundos + ' s)' };

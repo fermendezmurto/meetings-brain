@@ -32,18 +32,37 @@ const MODELO_POR_DEFECTO = 'gemini-3.6-flash';
  */
 const LIVIANO_POR_DEFECTO = 'gemini-3.5-flash-lite';
 
-/** Modelos para cada uso: el primero que se intenta y el de respaldo. */
+/**
+ * Modelos para cada uso, en el orden en que se prueban.
+ *
+ * En Chat alguien está esperando: primero el que viene respondiendo más rápido
+ * según lo medido. En las reuniones nadie espera en vivo: primero el grande,
+ * por la calidad de la minuta, salvo que venga fallando.
+ */
 function modelosPara_(uso) {
   const grande = prop_('GEMINI_MODEL', MODELO_POR_DEFECTO);
   const liviano = prop_('GEMINI_MODEL_NOTAS', LIVIANO_POR_DEFECTO);
-  if (uso === 'nota') {
-    return { principal: liviano, propiedad: 'GEMINI_MODEL_NOTAS', respaldo: modeloDeRespaldo(liviano, grande) };
-  }
-  return {
-    principal: grande,
-    propiedad: 'GEMINI_MODEL',
-    respaldo: modeloDeRespaldo(grande, prop_('GEMINI_MODEL_RESPALDO', liviano)),
-  };
+  const respaldo = uso === 'nota' ? modeloDeRespaldo(grande, liviano)
+    : modeloDeRespaldo(grande, prop_('GEMINI_MODEL_RESPALDO', liviano));
+  const todos = [grande].concat(respaldo ? [respaldo] : []);
+  const propiedad = {};
+  propiedad[grande] = 'GEMINI_MODEL';
+  if (respaldo) propiedad[respaldo] = uso === 'nota' ? 'GEMINI_MODEL_NOTAS' : 'GEMINI_MODEL_RESPALDO';
+
+  const orden = uso === 'nota' ? ordenarPorDesempeno(todos, mediciones_(), Date.now()) : todos;
+  return { orden: orden, principal: orden[0], respaldo: orden[1] || '', propiedad: propiedad[orden[0]] };
+}
+
+/** Lo medido de cada modelo en la última media hora. */
+function mediciones_() {
+  const guardadas = CacheService.getScriptCache().get('mediciones');
+  return guardadas ? JSON.parse(guardadas) : {};
+}
+
+function medir_(modelo, ms, ok) {
+  const cache = CacheService.getScriptCache();
+  const m = registrarMedicion(mediciones_(), modelo, ms, ok, Date.now());
+  cache.put('mediciones', JSON.stringify(m), 3600);
 }
 
 /**
@@ -195,6 +214,66 @@ function modeloDeRespaldo(principal, configurado) {
   return r;
 }
 
+/**
+ * Si el modelo más rápido viene tardando más que esto, no se lo intenta dentro
+ * de Chat: con lo que se va en leer y anotar, no llegaría a los 30 segundos.
+ */
+const ESPERA_MAXIMA_EN_CHAT_MS = 12000;
+
+/**
+ * Cuánto se supone que tarda un modelo del que todavía no hay mediciones.
+ * Lo bastante bajo como para darle una oportunidad en Chat.
+ */
+const ESPERA_SIN_DATOS_MS = 8000;
+
+/** Un modelo que falló hace menos de esto va al final de la fila. */
+const PENALIDAD_FALLA_MS = 5 * 60 * 1000;
+
+/** Las mediciones viejas no dicen nada del momento: se descartan. */
+const VIGENCIA_MEDICION_MS = 30 * 60 * 1000;
+
+/**
+ * Lo que se espera que tarde un modelo según lo medido, o Infinity si viene
+ * fallando. En la primera prueba real el modelo "rápido" tardó 37 segundos y
+ * el otro 7: suponer cuál es más rápido salió mal, medir no.
+ *
+ * @param {Object} medicion {ms, fallaEn, en} o undefined
+ */
+function esperaEstimada(medicion, ahoraMs) {
+  if (!medicion || ahoraMs - medicion.en > VIGENCIA_MEDICION_MS) return ESPERA_SIN_DATOS_MS;
+  if (medicion.fallaEn && ahoraMs - medicion.fallaEn < PENALIDAD_FALLA_MS) return Infinity;
+  return medicion.ms || ESPERA_SIN_DATOS_MS;
+}
+
+/**
+ * Los modelos en el orden en que conviene probarlos: el más rápido según lo
+ * medido primero. Con empate, se respeta el orden de preferencia.
+ */
+function ordenarPorDesempeno(modelos, mediciones, ahoraMs) {
+  return modelos
+    .map(function (m, i) { return { m: m, i: i, e: esperaEstimada(mediciones[m], ahoraMs) }; })
+    .sort(function (a, b) { return a.e === b.e ? a.i - b.i : a.e - b.e; })
+    .map(function (x) { return x.m; });
+}
+
+/**
+ * Suma una medición. El promedio pesa lo último a la mitad: la saturación cambia
+ * rápido y lo que pasó hace una hora importa poco.
+ */
+function registrarMedicion(mediciones, modelo, ms, ok, ahoraMs) {
+  const previa = mediciones[modelo];
+  const vigente = previa && ahoraMs - previa.en <= VIGENCIA_MEDICION_MS;
+  const nueva = { en: ahoraMs, ms: vigente ? previa.ms : 0, fallaEn: vigente ? previa.fallaEn || 0 : 0 };
+  if (ok) {
+    nueva.ms = nueva.ms ? Math.round((nueva.ms + ms) / 2) : ms;
+    nueva.fallaEn = 0;
+  } else {
+    nueva.fallaEn = ahoraMs;
+  }
+  mediciones[modelo] = nueva;
+  return mediciones;
+}
+
 // ===== Texto.js =====
 
 /**
@@ -312,6 +391,36 @@ function formatearCuando(plazoIso, hora, hoyIso) {
   return esHora(hora) ? dia + ' ' + normalizarHora(hora) : dia;
 }
 
+/** 'AAAA-MM-DD' si el día existe, o '' ("31/02" no es una fecha). */
+function fechaValida_(anio, mes, dia) {
+  const d = new Date(Date.UTC(anio, mes - 1, dia));
+  if (d.getUTCFullYear() !== anio || d.getUTCMonth() !== mes - 1 || d.getUTCDate() !== dia) return '';
+  const dos = function (n) { return (n < 10 ? '0' : '') + n; };
+  return anio + '-' + dos(mes) + '-' + dos(dia);
+}
+
+/**
+ * Lleva una fecha a AAAA-MM-DD aunque el modelo la devuelva en otro formato.
+ * En el piloto, "mandar la propuesta el viernes" quedó sin fecha: el modelo
+ * contestó bien pero no con la forma pedida, y la fecha se descartó.
+ *
+ * Acepta 2026-09-25, 2026-09-25T00:00:00, 25/09/2026, 25/09/26 y 25/09. Sin año,
+ * una fecha que ya pasó es del año siguiente: "15/01" dicho en diciembre.
+ */
+function normalizarFecha(texto, hoyIso) {
+  const t = String(texto || '').trim();
+  let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return fechaValida_(Number(m[1]), Number(m[2]), Number(m[3]));
+
+  m = t.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2}|\d{4}))?$/);
+  if (!m) return '';
+  let anio = m[3] ? Number(m[3]) : Number(hoyIso.slice(0, 4));
+  if (anio < 100) anio += 2000;
+  const fecha = fechaValida_(anio, Number(m[2]), Number(m[1]));
+  if (fecha && !m[3] && fecha < hoyIso) return fechaValida_(anio + 1, Number(m[2]), Number(m[1]));
+  return fecha;
+}
+
 // ===== Agenda.js =====
 
 /**
@@ -324,15 +433,15 @@ function formatearCuando(plazoIso, hora, hoyIso) {
  * calendario, las tareas a su lista.
  */
 
-/** "17:00", "9:30". */
+/** "17:00", "9:30", y también "17:00:00", que es como a veces la devuelve el modelo. */
 function esHora(texto) {
-  return /^([01]?\d|2[0-3]):[0-5]\d$/.test(String(texto || ''));
+  return /^([01]?\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(String(texto || '').trim());
 }
 
-/** Siempre con dos dígitos: "9:30" pasa a "09:30". */
+/** Siempre HH:MM: "9:30" pasa a "09:30" y "17:00:00" a "17:00". */
 function normalizarHora(texto) {
   if (!esHora(texto)) return '';
-  const p = String(texto).split(':');
+  const p = String(texto).trim().split(':');
   return (p[0].length === 1 ? '0' : '') + p[0] + ':' + p[1];
 }
 
@@ -1260,7 +1369,14 @@ function geminiConUso_(partes, esquema, opciones) {
   const modelo = modelos.principal;
   const restante = function () { return opciones.hasta ? opciones.hasta - Date.now() : undefined; };
 
-  const turno = [modelo].concat(modelos.respaldo ? [modelos.respaldo] : []);
+  // Si todos vienen lentos o fallando, ni se intenta dentro de Chat: un pedido
+  // en curso no se puede cortar, y si pasa los 30 segundos la persona ve "no
+  // responde". Mejor contestar al toque y terminarlo después.
+  if (opciones.hasta && esperaEstimada(mediciones_()[modelo], Date.now()) > ESPERA_MAXIMA_EN_CHAT_MS) {
+    throw errorPasajero_('Gemini viene lento: lo dejo para terminar después.');
+  }
+
+  const turno = modelos.orden.slice();
   const maximo = opciones.hasta ? MAX_PEDIDOS_CON_CORTE : MAX_PEDIDOS_SIN_CORTE;
 
   let r = pedirConAjuste_(modelo, partes, esquema, opciones);
@@ -1323,10 +1439,20 @@ function errorPasajero_(mensaje) {
  * razonamiento, se pide de nuevo sin acotarlo. Más lento, pero contesta.
  */
 function pedirConAjuste_(modelo, partes, esquema, opciones) {
-  const r = pedirGemini_(modelo, partes, generacionPara_(modelo, esquema, opciones));
+  const inicio = Date.now();
+  let r = pedirGemini_(modelo, partes, generacionPara_(modelo, esquema, opciones));
   if (r.getResponseCode() === 400 && configRazonamiento(modelo, opciones.razonamiento) &&
       /thinking/i.test(r.getContentText())) {
-    return pedirGemini_(modelo, partes, generacionPara_(modelo, esquema, { maxTokens: opciones.maxTokens }));
+    r = pedirGemini_(modelo, partes, generacionPara_(modelo, esquema, { maxTokens: opciones.maxTokens }));
+  }
+  // Cada pedido deja su medición: así Chat sabe cuál modelo viene más rápido.
+  const codigo = r.getResponseCode();
+  if (codigo === 200 || esErrorPasajero(codigo) || codigo === 429) {
+    try {
+      medir_(modelo, Date.now() - inicio, codigo === 200);
+    } catch (err) {
+      console.error(err);
+    }
   }
   return r;
 }
@@ -2026,7 +2152,14 @@ function anotarTareas_(items, origen, gente, sinResponsableEsQuienPide, opciones
   // Fuera de Chat se corre con la cuenta de quien instaló: el calendario y la
   // lista de tareas de quien escribió no están al alcance.
   const ajeno = Boolean(opciones && opciones.diferido) && origen.emailPidio !== yo;
-  return items.map(function (item) {
+  const hoy = hoy_();
+  return items.map(function (crudo) {
+    // Fecha y hora en la forma de la base, aunque el modelo las devuelva de otra.
+    const item = {};
+    Object.keys(crudo).forEach(function (k) { item[k] = crudo[k]; });
+    item.plazo = normalizarFecha(crudo.plazo, hoy);
+    item.hora = normalizarHora(crudo.hora);
+
     const quien = resolverResponsable_(item, origen, gente, sinResponsableEsQuienPide);
     const tipo = clasificarItem(item);
 
@@ -2034,8 +2167,8 @@ function anotarTareas_(items, origen, gente, sinResponsableEsQuienPide, opciones
       que: item.que,
       responsable: quien.nombre,
       emailResponsable: quien.email,
-      plazo: esFechaIso(item.plazo) ? item.plazo : '',
-      hora: normalizarHora(item.hora),
+      plazo: item.plazo,
+      hora: item.hora,
       tipo: tipo,
       pidio: origen.pidio,
       emailPidio: origen.emailPidio,
@@ -2558,9 +2691,12 @@ function instalar() {
   // Una clave inválida o un modelo retirado frenan la instalación: hay que
   // corregirlos. Que un modelo esté saturado, no: Google ya aceptó la clave
   // para llegar a decir eso, y se arregla solo.
-  const pruebas = [modelosPara_('nota'), modelosPara_('reunion')]
-    .filter(function (m, i, todos) { return i === 0 || m.principal !== todos[0].principal; })
-    .map(function (m) { return probarModelo_(m.principal, m.propiedad); });
+  // Se prueban todos los que puede usar el Asistente. Lo que tardan queda como
+  // punto de partida para elegir en Chat el que viene más rápido.
+  const aProbar = modelosPara_('nota');
+  const pruebas = aProbar.orden.map(function (m) {
+    return probarModelo_(m, m === prop_('GEMINI_MODEL', MODELO_POR_DEFECTO) ? 'GEMINI_MODEL' : 'GEMINI_MODEL_NOTAS');
+  });
   const estadoGemini = pruebas.some(function (p) { return p.ok; })
     ? 'la clave de Gemini funciona.'
     : 'Google aceptó la clave, pero Gemini está saturado en este momento. Los primeros mensajes pueden fallar unos minutos.';
@@ -2604,6 +2740,7 @@ function probarModelo_(modelo, propiedad) {
     { type: 'OBJECT', properties: { ok: { type: 'BOOLEAN' } }, required: ['ok'] }, {}));
   const segundos = Math.round((Date.now() - inicio) / 100) / 10;
   const codigo = r.getResponseCode();
+  if (codigo === 200 || esErrorPasajero(codigo) || codigo === 429) medir_(modelo, Date.now() - inicio, codigo === 200);
   if (codigo === 200) return { ok: true, linea: modelo + ': respondió en ' + segundos + ' s' };
   if (esErrorPasajero(codigo) || codigo === 429) {
     return { ok: false, linea: modelo + ': saturado (' + codigo + ', a los ' + segundos + ' s)' };

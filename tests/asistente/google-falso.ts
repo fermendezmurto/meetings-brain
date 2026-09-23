@@ -30,6 +30,8 @@ export interface Guion {
   rechazaRazonamiento?: boolean
   /** Solo estos modelos rechazan el parámetro de razonamiento. */
   rechazaRazonamientoEn?: string[]
+  /** Cuánto tarda cada modelo en contestar, en milisegundos. */
+  demora?: (modelo: string, tipo: string) => number
   /** Calendar o Tasks sin habilitar en el proyecto. */
   fallaCalendar?: boolean
   fallaTasks?: boolean
@@ -389,6 +391,7 @@ export function crearGoogle(opciones: { ahora: string; guion?: Guion }) {
         const tipo = tipoDePedido(cuerpo)
         pedidosGemini.push({ tipo, cuerpo, claveEnEncabezado, url })
         const modelo = url.match(/models\/([^:]+):/)![1]
+        ahora += guion.demora?.(modelo, tipo) ?? 0
         if (guion.modelosRetirados?.includes(modelo)) {
           return respuesta(404, { error: { code: 404, status: 'NOT_FOUND', message: `This model models/${modelo} is no longer available to new users. Please update your code to use models/gemini-3.6-flash for the latest features and improvements.` } })
         }

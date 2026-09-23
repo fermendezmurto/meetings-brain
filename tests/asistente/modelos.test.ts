@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { cargar, TODOS } from './cargar'
 
-const { configRazonamiento, modeloDeRespaldo, elegirModeloLiviano, modeloDelIntento, mensajeModeloRetirado, esErrorPasajero, convieneReintentar } = cargar(...TODOS)
+const { configRazonamiento, modeloDeRespaldo, elegirModeloLiviano, modeloDelIntento, esperaEstimada, ordenarPorDesempeno, registrarMedicion, mensajeModeloRetirado, esErrorPasajero, convieneReintentar } = cargar(...TODOS)
 
 describe('configRazonamiento', () => {
   it('a la familia 2.5 Flash le acota el razonamiento con un presupuesto', () => {
@@ -101,5 +101,38 @@ describe('modeloDelIntento', () => {
     const turno = ['liviano', 'grande']
     expect([0, 1, 2, 3, 4].map((n) => modeloDelIntento(turno, n))).toEqual(['liviano', 'grande', 'liviano', 'grande', 'liviano'])
     expect([0, 1, 2].map((n) => modeloDelIntento(['unico'], n))).toEqual(['unico', 'unico', 'unico'])
+  })
+})
+
+describe('elegir por lo medido', () => {
+  const T = 10_000_000
+
+  it('ordena por lo que viene tardando cada modelo', () => {
+    // Lo que se midió en el piloto al instalar.
+    const m = { liviano: { en: T, ms: 36900, fallaEn: 0 }, grande: { en: T, ms: 6900, fallaEn: 0 } }
+    expect(ordenarPorDesempeno(['liviano', 'grande'], m, T)).toEqual(['grande', 'liviano'])
+  })
+
+  it('un modelo que falló hace poco va al final; pasados cinco minutos, vuelve a competir', () => {
+    const m = { grande: { en: T, ms: 3000, fallaEn: T }, liviano: { en: T, ms: 9000, fallaEn: 0 } }
+    expect(ordenarPorDesempeno(['grande', 'liviano'], m, T)).toEqual(['liviano', 'grande'])
+    expect(esperaEstimada(m.grande, T + 6 * 60 * 1000)).toBe(3000)
+  })
+
+  it('sin mediciones, o con mediciones viejas, respeta el orden de preferencia', () => {
+    expect(ordenarPorDesempeno(['grande', 'liviano'], {}, T)).toEqual(['grande', 'liviano'])
+    const viejas = { liviano: { en: T - 60 * 60 * 1000, ms: 1000, fallaEn: 0 } }
+    expect(ordenarPorDesempeno(['grande', 'liviano'], viejas, T)).toEqual(['grande', 'liviano'])
+  })
+
+  it('el promedio pesa lo último a la mitad, y un éxito borra la falla', () => {
+    let m: any = {}
+    m = registrarMedicion(m, 'x', 10000, true, T)
+    m = registrarMedicion(m, 'x', 2000, true, T + 1000)
+    expect(m.x.ms).toBe(6000)
+    m = registrarMedicion(m, 'x', 500, false, T + 2000)
+    expect(esperaEstimada(m.x, T + 2000)).toBe(Infinity)
+    m = registrarMedicion(m, 'x', 2000, true, T + 3000)
+    expect(esperaEstimada(m.x, T + 3000)).toBe(4000)
   })
 })

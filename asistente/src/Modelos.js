@@ -110,3 +110,63 @@ function modeloDeRespaldo(principal, configurado) {
   if (!r || r.toLowerCase() === 'ninguno' || r === principal) return '';
   return r;
 }
+
+/**
+ * Si el modelo más rápido viene tardando más que esto, no se lo intenta dentro
+ * de Chat: con lo que se va en leer y anotar, no llegaría a los 30 segundos.
+ */
+const ESPERA_MAXIMA_EN_CHAT_MS = 12000;
+
+/**
+ * Cuánto se supone que tarda un modelo del que todavía no hay mediciones.
+ * Lo bastante bajo como para darle una oportunidad en Chat.
+ */
+const ESPERA_SIN_DATOS_MS = 8000;
+
+/** Un modelo que falló hace menos de esto va al final de la fila. */
+const PENALIDAD_FALLA_MS = 5 * 60 * 1000;
+
+/** Las mediciones viejas no dicen nada del momento: se descartan. */
+const VIGENCIA_MEDICION_MS = 30 * 60 * 1000;
+
+/**
+ * Lo que se espera que tarde un modelo según lo medido, o Infinity si viene
+ * fallando. En la primera prueba real el modelo "rápido" tardó 37 segundos y
+ * el otro 7: suponer cuál es más rápido salió mal, medir no.
+ *
+ * @param {Object} medicion {ms, fallaEn, en} o undefined
+ */
+function esperaEstimada(medicion, ahoraMs) {
+  if (!medicion || ahoraMs - medicion.en > VIGENCIA_MEDICION_MS) return ESPERA_SIN_DATOS_MS;
+  if (medicion.fallaEn && ahoraMs - medicion.fallaEn < PENALIDAD_FALLA_MS) return Infinity;
+  return medicion.ms || ESPERA_SIN_DATOS_MS;
+}
+
+/**
+ * Los modelos en el orden en que conviene probarlos: el más rápido según lo
+ * medido primero. Con empate, se respeta el orden de preferencia.
+ */
+function ordenarPorDesempeno(modelos, mediciones, ahoraMs) {
+  return modelos
+    .map(function (m, i) { return { m: m, i: i, e: esperaEstimada(mediciones[m], ahoraMs) }; })
+    .sort(function (a, b) { return a.e === b.e ? a.i - b.i : a.e - b.e; })
+    .map(function (x) { return x.m; });
+}
+
+/**
+ * Suma una medición. El promedio pesa lo último a la mitad: la saturación cambia
+ * rápido y lo que pasó hace una hora importa poco.
+ */
+function registrarMedicion(mediciones, modelo, ms, ok, ahoraMs) {
+  const previa = mediciones[modelo];
+  const vigente = previa && ahoraMs - previa.en <= VIGENCIA_MEDICION_MS;
+  const nueva = { en: ahoraMs, ms: vigente ? previa.ms : 0, fallaEn: vigente ? previa.fallaEn || 0 : 0 };
+  if (ok) {
+    nueva.ms = nueva.ms ? Math.round((nueva.ms + ms) / 2) : ms;
+    nueva.fallaEn = 0;
+  } else {
+    nueva.fallaEn = ahoraMs;
+  }
+  mediciones[modelo] = nueva;
+  return mediciones;
+}

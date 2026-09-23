@@ -247,14 +247,19 @@ aparecen en su Google Tasks la próxima vez que le escribe al Asistente.
 
 ## Qué modelos usa
 
-- **En Chat, primero el liviano** (`GEMINI_MODEL_NOTAS`): es el más rápido y el
-  que menos se satura, y para entender una nota alcanza. Si está saturado,
-  prueba el grande. `instalar` lo elige solo entre los modelos que Google
-  ofrece a la clave, y en el registro muestra cuánto tardó cada uno.
-- **En las reuniones, primero el grande** (`GEMINI_MODEL`), por la calidad de la
-  minuta. Si está saturado, prueba el liviano (`GEMINI_MODEL_RESPALDO` lo
-  cambia; `ninguno` lo apaga).
-- Todos se cambian en **Propiedades del script**, sin tocar el código.
+Dos: el principal (`GEMINI_MODEL`) y uno liviano (`GEMINI_MODEL_NOTAS`, que
+`instalar` elige solo entre los que Google ofrece a la clave).
+
+- **En Chat, primero el que viene respondiendo más rápido**, según lo medido
+  en la última media hora. Un modelo que acaba de fallar pasa al final de la
+  fila. Si los dos vienen lentos, ni se intenta dentro de Chat: se contesta al
+  instante y se termina después, así nunca aparece "no responde".
+- **En las reuniones, primero el principal**, por la calidad de la minuta. Si
+  está saturado, prueba el liviano (`GEMINI_MODEL_RESPALDO` lo cambia;
+  `ninguno` lo apaga).
+- `instalar` prueba los dos y deja en el registro cuánto tardó cada uno: esas
+  mediciones son el punto de partida.
+- Todo se cambia en **Propiedades del script**, sin tocar el código.
 
 ## Para conectar otros sistemas
 

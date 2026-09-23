@@ -308,7 +308,14 @@ function anotarTareas_(items, origen, gente, sinResponsableEsQuienPide, opciones
   // Fuera de Chat se corre con la cuenta de quien instaló: el calendario y la
   // lista de tareas de quien escribió no están al alcance.
   const ajeno = Boolean(opciones && opciones.diferido) && origen.emailPidio !== yo;
-  return items.map(function (item) {
+  const hoy = hoy_();
+  return items.map(function (crudo) {
+    // Fecha y hora en la forma de la base, aunque el modelo las devuelva de otra.
+    const item = {};
+    Object.keys(crudo).forEach(function (k) { item[k] = crudo[k]; });
+    item.plazo = normalizarFecha(crudo.plazo, hoy);
+    item.hora = normalizarHora(crudo.hora);
+
     const quien = resolverResponsable_(item, origen, gente, sinResponsableEsQuienPide);
     const tipo = clasificarItem(item);
 
@@ -316,8 +323,8 @@ function anotarTareas_(items, origen, gente, sinResponsableEsQuienPide, opciones
       que: item.que,
       responsable: quien.nombre,
       emailResponsable: quien.email,
-      plazo: esFechaIso(item.plazo) ? item.plazo : '',
-      hora: normalizarHora(item.hora),
+      plazo: item.plazo,
+      hora: item.hora,
       tipo: tipo,
       pidio: origen.pidio,
       emailPidio: origen.emailPidio,

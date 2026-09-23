@@ -28,6 +28,7 @@ describe('horas', () => {
     expect(f.esHora('25:00')).toBe(false)
     expect(f.esHora('5 de la tarde')).toBe(false)
     expect(f.normalizarHora('9:30')).toBe('09:30')
+    expect(f.normalizarHora('17:00:00')).toBe('17:00')
     expect(f.normalizarHora('basura')).toBe('')
   })
 
