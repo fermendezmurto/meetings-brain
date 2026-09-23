@@ -196,6 +196,7 @@ tareas:** así la conoce.
 | "No pude bajar el audio de Chat" | Subí el audio a Drive y mandale el **enlace** al Asistente: lo lee igual. |
 | Te llega "No pude procesar la reunión" | Lo intentó tres veces. El correo trae el motivo, y el audio sigue en Drive. |
 | El Asistente no aparece en Chat | Revisá la **Visibilidad** del paso 9 de la Parte 2: tu correo tiene que estar. |
+| "Asistente no responde", y en **Ejecuciones** no aparece ningún `onMessage` | Chat no está llegando al código. Revisá que `appsscript.json` sea el de [`dist/appsscript.json`](dist/appsscript.json) (tiene que tener una sección `addOns`), y el ID de implementación y los nombres de las funciones en la configuración de Chat. |
 | "Permission denied while enabling APIs" | Habilitá a mano las cuatro APIs del paso 2c y volvé a correr instalar. |
 | "Google retiró el modelo…" | El mismo mensaje dice qué valor poner en la propiedad `GEMINI_MODEL`. |
 | "Gemini está saturado en este momento" | Es de Google y suele durar minutos. El Asistente reintenta solo con las reuniones. |

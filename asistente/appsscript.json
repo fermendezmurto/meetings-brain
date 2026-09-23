@@ -2,7 +2,13 @@
   "timeZone": "America/Asuncion",
   "runtimeVersion": "V8",
   "exceptionLogging": "STACKDRIVER",
-  "chat": {},
+  "addOns": {
+    "common": {
+      "name": "Asistente",
+      "logoUrl": "https://developers.google.com/workspace/add-ons/images/quickstart-app-avatar.png"
+    },
+    "chat": {}
+  },
   "oauthScopes": [
     "https://www.googleapis.com/auth/chat.messages.readonly",
     "https://www.googleapis.com/auth/spreadsheets",
