@@ -9,7 +9,8 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "asistente": "node scripts/armar-asistente.mjs"
   },
   "dependencies": {
     "jose": "^5.9.6",

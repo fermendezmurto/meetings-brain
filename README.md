@@ -1,5 +1,10 @@
 # Reuniones
 
+> **El camino actual es el [Asistente para Google Chat](asistente/README.md).**
+> Funciona igual para toda la empresa sin importar el plan de Workspace, sin
+> servidor y sin costo en el piloto. La app web de más abajo fue el primer
+> prototipo y queda como referencia.
+
 Grabadora de reuniones para toda la empresa. Cada persona entra con su cuenta de
 Google, graba desde el teléfono, y al terminar quedan el audio, la transcripción
 y la minuta en su carpeta de Drive, sin pasos manuales.

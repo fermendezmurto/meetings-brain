@@ -4,18 +4,18 @@ import type { Transcripcion } from '../types'
 import type { Transcriptor } from './index'
 
 const ESQUEMA = {
-  type: 'object',
+  type: 'OBJECT',
   properties: {
-    idioma: { type: 'string' },
+    idioma: { type: 'STRING' },
     turnos: {
-      type: 'array',
+      type: 'ARRAY',
       items: {
-        type: 'object',
+        type: 'OBJECT',
         properties: {
-          hablante: { type: 'integer' },
-          desde: { type: 'number' },
-          hasta: { type: 'number' },
-          texto: { type: 'string' },
+          hablante: { type: 'INTEGER' },
+          desde: { type: 'NUMBER' },
+          hasta: { type: 'NUMBER' },
+          texto: { type: 'STRING' },
         },
         required: ['hablante', 'desde', 'hasta', 'texto'],
       },

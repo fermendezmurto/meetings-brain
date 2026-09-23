@@ -4,38 +4,38 @@ import { reloj } from '../speakers'
 import type { Resumidor } from './index'
 
 const ESQUEMA = {
-  type: 'object',
+  type: 'OBJECT',
   properties: {
-    titulo: { type: 'string' },
-    resumen: { type: 'string' },
+    titulo: { type: 'STRING' },
+    resumen: { type: 'STRING' },
     participantes: {
-      type: 'array',
+      type: 'ARRAY',
       items: {
-        type: 'object',
+        type: 'OBJECT',
         properties: {
-          nombre: { type: 'string' },
-          hablante: { type: 'integer' },
-          rol: { type: 'string' },
+          nombre: { type: 'STRING' },
+          hablante: { type: 'INTEGER' },
+          rol: { type: 'STRING' },
         },
         required: ['nombre', 'hablante'],
       },
     },
-    decisiones: { type: 'array', items: { type: 'string' } },
+    decisiones: { type: 'ARRAY', items: { type: 'STRING' } },
     compromisos: {
-      type: 'array',
+      type: 'ARRAY',
       items: {
-        type: 'object',
+        type: 'OBJECT',
         properties: {
-          que: { type: 'string' },
-          duenio: { type: 'string' },
-          plazo: { type: 'string' },
+          que: { type: 'STRING' },
+          duenio: { type: 'STRING' },
+          plazo: { type: 'STRING' },
         },
         required: ['que'],
       },
     },
-    preguntasAbiertas: { type: 'array', items: { type: 'string' } },
-    riesgos: { type: 'array', items: { type: 'string' } },
-    temas: { type: 'array', items: { type: 'string' } },
+    preguntasAbiertas: { type: 'ARRAY', items: { type: 'STRING' } },
+    riesgos: { type: 'ARRAY', items: { type: 'STRING' } },
+    temas: { type: 'ARRAY', items: { type: 'STRING' } },
   },
   required: ['titulo', 'resumen', 'participantes', 'decisiones', 'compromisos'],
 }
