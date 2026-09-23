@@ -55,6 +55,14 @@ describe('instalar', () => {
     expect(g.disparadores).toHaveLength(2)
   })
 
+  it('si Gemini está saturado al instalar, queda instalado igual y lo advierte', () => {
+    const g = crearGoogle({ ahora: AHORA, guion: { fallaGemini: () => 503 } })
+    g.props.set('GEMINI_API_KEY', 'AQ.x')
+    expect(() => g.llamar('instalar')).not.toThrow()
+    expect(g.props.get('BASE_ID')).toBeTruthy()
+    expect(g.disparadores).toHaveLength(2)
+  })
+
   it('sin la clave de Gemini se niega y dice qué falta', () => {
     const g = crearGoogle({ ahora: AHORA })
     expect(() => g.llamar('instalar')).toThrow(/GEMINI_API_KEY/)
@@ -189,6 +197,22 @@ describe('conversación', () => {
     escribir(g, FER, 'pedile a Diana el presupuesto')
     const r = escribir(g, FER, 'pedidos')
     expect(r).toContain('Enviar el presupuesto — Diana Valiente · *vencida: jue 24/09*')
+  })
+
+  it('si Gemini se satura un instante, reintenta solo y la persona ni se entera', () => {
+    let fallas = 1
+    const g = instalado({
+      nota: { intencion: 'pendientes', respuesta: '', tareas: [] },
+      fallaGemini: (t: string) => (t === 'nota' && fallas-- > 0 ? 503 : undefined),
+    })
+    expect(escribir(g, FER, 'anotame algo')).toBe('No tenés nada pendiente.')
+  })
+
+  it('si Gemini sigue saturado, lo dice con palabras claras', () => {
+    const g = instalado({ fallaGemini: (t: string) => (t === 'nota' ? 503 : undefined) })
+    const r = escribir(g, FER, 'anotame algo')
+    expect(r).toContain('Gemini está saturado en este momento')
+    expect(r).not.toContain('503')
   })
 
   it('un error de Gemini llega como mensaje claro, no como silencio', () => {
@@ -336,8 +360,8 @@ describe('reuniones', () => {
     expect(g.correos.some((c) => c.subject.includes('No pude procesar'))).toBe(false)
   })
 
-  it('si la minuta falla, reintenta; a la tercera avisa, y el audio no se pierde', () => {
-    const g = reunionEnCola({ fallaGemini: (t: string) => (t === 'minuta' ? 500 : undefined) })
+  it('si la minuta falla por algo que no se arregla solo, a la tercera avisa, y el audio no se pierde', () => {
+    const g = reunionEnCola({ fallaGemini: (t: string) => (t === 'minuta' ? 400 : undefined) })
     g.llamar('procesarReuniones')
     expect(fila(g)[9]).toBe('subida')
     expect(fila(g)[13]).toBe(1)
@@ -353,6 +377,31 @@ describe('reuniones', () => {
     expect(g.pedidosGemini.filter((p) => p.tipo === 'subida-datos')).toHaveLength(1)
     g.llamar('procesarReuniones')
     expect(g.pedidosGemini.filter((p) => p.tipo === 'minuta')).toHaveLength(3)
+  })
+
+  it('si Gemini está saturado, no gasta los tres intentos: sigue probando una hora', () => {
+    const g = reunionEnCola({ minuta: MINUTA, fallaGemini: (t: string) => (t === 'minuta' ? 503 : undefined) })
+    for (let i = 0; i < 3; i++) g.llamar('procesarReuniones')
+    expect(fila(g)[9]).toBe('subida')
+    expect(g.correos.some((c) => c.subject.includes('No pude procesar'))).toBe(false)
+
+    for (let i = 0; i < 9; i++) g.llamar('procesarReuniones')
+    expect(fila(g)[9]).toBe('error')
+    const aviso = g.correos.at(-1)
+    expect(aviso.body).toContain('Intenté 12 veces')
+    expect(aviso.body).toContain('saturado')
+  })
+
+  it('si la saturación se pasa, la reunión sale sin que nadie haga nada', () => {
+    let saturado = true
+    const g = reunionEnCola({ minuta: MINUTA, minutosDeAudio: 5, tramo: { turnos: [] },
+      fallaGemini: (t: string) => (t === 'minuta' && saturado ? 503 : undefined) })
+    g.llamar('procesarReuniones')
+    expect(fila(g)[9]).toBe('subida')
+    saturado = false
+    g.llamar('procesarReuniones')
+    expect(['transcribiendo', 'completa']).toContain(fila(g)[9])
+    expect(g.correos.some((c) => c.subject === 'Minuta: Seguimiento comercial')).toBe(true)
   })
 
   it('un audio demasiado grande se rechaza con explicación, sin quedar a medias', () => {

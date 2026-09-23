@@ -93,6 +93,24 @@ function mensajeModeloRetirado(modelo, cuerpo) {
     : 'En Propiedades del script, cambiá GEMINI_MODEL por un modelo vigente.');
 }
 
+/**
+ * Errores de Gemini que se arreglan solos esperando: saturación del modelo y
+ * fallas momentáneas del servidor. Con el nivel gratuito y un modelo recién
+ * lanzado son frecuentes, y no tienen que tratarse como si algo estuviera roto.
+ */
+function esErrorPasajero(codigo) {
+  return codigo === 500 || codigo === 502 || codigo === 503 || codigo === 504;
+}
+
+/**
+ * Reintentar solo sirve si el fallo fue rápido. Si Gemini tardó en rechazar el
+ * pedido, reintentar pasaría el límite de 30 segundos de Chat y el de 60 de
+ * Apps Script, y la persona se quedaría sin ninguna respuesta.
+ */
+function convieneReintentar(codigo, milisegundos) {
+  return esErrorPasajero(codigo) && milisegundos < 10000;
+}
+
 // ===== Texto.js =====
 
 /**
@@ -885,18 +903,27 @@ function geminiConUso_(partes, esquema, opciones) {
   const razonamiento = configRazonamiento(modelo, opciones.razonamiento);
   if (razonamiento) generacion.thinkingConfig = razonamiento;
 
+  let inicio = Date.now();
   let r = pedirGemini_(modelo, partes, generacion);
   // Si el modelo no acepta cómo se le acotó el razonamiento, se pide de nuevo
   // sin acotarlo: más lento, pero contesta.
   if (r.getResponseCode() === 400 && generacion.thinkingConfig && /thinking/i.test(r.getContentText())) {
     delete generacion.thinkingConfig;
+    inicio = Date.now();
+    r = pedirGemini_(modelo, partes, generacion);
+  }
+  if (convieneReintentar(r.getResponseCode(), Date.now() - inicio)) {
+    Utilities.sleep(3000);
     r = pedirGemini_(modelo, partes, generacion);
   }
 
   const codigo = r.getResponseCode();
   const cuerpo = r.getContentText();
   if (codigo === 429) {
-    throw new Error('Gemini llegó al límite de pedidos del nivel gratuito. Probá de nuevo en un rato.');
+    throw errorPasajero_('Gemini llegó al límite de pedidos del nivel gratuito. Probá de nuevo en un rato.');
+  }
+  if (esErrorPasajero(codigo)) {
+    throw errorPasajero_('Gemini está saturado en este momento. Suele pasar unos minutos: probá de nuevo en un rato.');
   }
   if (codigo === 404 && /no longer available|not found/i.test(cuerpo)) {
     throw new Error(mensajeModeloRetirado(modelo, cuerpo));
@@ -915,6 +942,13 @@ function geminiConUso_(partes, esquema, opciones) {
     .join('');
   if (!texto) throw new Error('Gemini devolvió una respuesta vacía (' + candidato.finishReason + ').');
   return { datos: JSON.parse(texto), uso: datos.usageMetadata || {} };
+}
+
+/** Un error que se arregla solo esperando: quien lo recibe puede reintentar. */
+function errorPasajero_(mensaje) {
+  const e = new Error(mensaje);
+  e.pasajero = true;
+  return e;
 }
 
 function pedirGemini_(modelo, partes, generacion) {
@@ -1070,7 +1104,7 @@ function avisarFalla_(r) {
     subject: 'No pude procesar la reunión del ' + r.recibida.slice(0, 10),
     name: 'Asistente',
     body: [
-      'Intenté ' + MAX_INTENTOS + ' veces procesar la reunión que me mandaste y no pude.',
+      'Intenté ' + r.intentos + ' veces procesar la reunión que me mandaste y no pude.',
       '',
       'Motivo: ' + r.error,
       '',
@@ -1392,6 +1426,11 @@ function cerrar_(quien, numero) {
  */
 
 const MAX_INTENTOS = 3;
+/**
+ * Si el problema es que Gemini está saturado, se sigue probando durante una
+ * hora (una vez cada cinco minutos) antes de avisar que no se pudo.
+ */
+const MAX_INTENTOS_PASAJEROS = 12;
 const MAX_FALLAS_TRANSCRIPCION = 5;
 /** Margen antes del corte de seis minutos de Apps Script. */
 const PRESUPUESTO_MS = 4 * 60 * 1000;
@@ -1437,7 +1476,7 @@ function procesarPendientes_() {
 
   // Primero las que todavía no tienen minuta: es lo que alguien está esperando.
   const antesDeLaMinuta = reuniones_().filter(function (r) {
-    return (r.estado === 'recibida' || r.estado === 'subida') && r.intentos < MAX_INTENTOS;
+    return r.estado === 'recibida' || r.estado === 'subida';
   });
   for (let i = 0; i < antesDeLaMinuta.length && quedaTiempo(); i++) {
     const r = antesDeLaMinuta[i];
@@ -1478,12 +1517,14 @@ function mensajeDe_(err) {
 function registrarFalla_(r, err) {
   console.error('Reunión ' + r.id + ': ' + (err && err.stack ? err.stack : err));
   const intentos = r.intentos + 1;
+  const limite = err && err.pasajero ? MAX_INTENTOS_PASAJEROS : MAX_INTENTOS;
+  const seRinde = intentos >= limite;
   actualizarReunion_(r, {
     intentos: intentos,
     error: mensajeDe_(err),
-    estado: intentos >= MAX_INTENTOS ? 'error' : r.estado,
+    estado: seRinde ? 'error' : r.estado,
   });
-  if (intentos >= MAX_INTENTOS) avisarFalla_(r);
+  if (seRinde) avisarFalla_(r);
 }
 
 /** Sube el audio a Gemini si no está, o si está por vencer. */
@@ -1686,14 +1727,24 @@ function instalar() {
   ScriptApp.newTrigger('procesarReuniones').timeBased().everyMinutes(5).create();
   ScriptApp.newTrigger('avisoMatutino').timeBased().atHour(8).everyDays(1).inTimezone(ZONA).create();
 
-  const prueba = geminiJson_(
-    [{ text: 'Respondé con ok en true.' }],
-    { type: 'OBJECT', properties: { ok: { type: 'BOOLEAN' } }, required: ['ok'] }
-  );
-  if (!prueba.ok) throw new Error('Gemini respondió, pero no lo esperado: ' + JSON.stringify(prueba));
+  // Una clave inválida o un modelo retirado frenan la instalación: hay que
+  // corregirlos. Que el modelo esté saturado, no: Google ya aceptó la clave
+  // para llegar a decir eso, y se arregla solo.
+  let estadoGemini = 'la clave de Gemini funciona.';
+  try {
+    const prueba = geminiJson_(
+      [{ text: 'Respondé con ok en true.' }],
+      { type: 'OBJECT', properties: { ok: { type: 'BOOLEAN' } }, required: ['ok'] }
+    );
+    if (!prueba.ok) throw new Error('Gemini respondió, pero no lo esperado: ' + JSON.stringify(prueba));
+  } catch (err) {
+    if (!err.pasajero) throw err;
+    estadoGemini = 'Google aceptó la clave, pero Gemini está saturado en este momento. ' +
+      'Los primeros mensajes pueden fallar unos minutos.';
+  }
 
   console.log([
-    'Listo. Todo instalado y la clave de Gemini funciona.',
+    'Listo. Todo instalado y ' + estadoGemini,
     '',
     'Carpeta: ' + carpeta.getUrl(),
     'Base:    ' + base.getUrl(),

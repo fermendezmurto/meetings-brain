@@ -69,7 +69,7 @@ function avisarFalla_(r) {
     subject: 'No pude procesar la reunión del ' + r.recibida.slice(0, 10),
     name: 'Asistente',
     body: [
-      'Intenté ' + MAX_INTENTOS + ' veces procesar la reunión que me mandaste y no pude.',
+      'Intenté ' + r.intentos + ' veces procesar la reunión que me mandaste y no pude.',
       '',
       'Motivo: ' + r.error,
       '',

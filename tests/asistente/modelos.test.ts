@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { cargar, TODOS } from './cargar'
 
-const { configRazonamiento, mensajeModeloRetirado } = cargar(...TODOS)
+const { configRazonamiento, mensajeModeloRetirado, esErrorPasajero, convieneReintentar } = cargar(...TODOS)
 
 describe('configRazonamiento', () => {
   it('a la familia 2.5 Flash le acota el razonamiento con un presupuesto', () => {
@@ -41,5 +41,20 @@ describe('mensajeModeloRetirado', () => {
 
   it('si Google no sugiere reemplazo, igual dice dónde cambiarlo', () => {
     expect(mensajeModeloRetirado('gemini-x', 'not found')).toContain('cambiá GEMINI_MODEL')
+  })
+})
+
+describe('errores pasajeros', () => {
+  it('la saturación y las fallas momentáneas del servidor se arreglan solas', () => {
+    expect([500, 502, 503, 504].every(esErrorPasajero)).toBe(true)
+    expect([400, 401, 403, 404, 429].some(esErrorPasajero)).toBe(false)
+  })
+
+  it('se reintenta solo si el fallo fue rápido, para no pasar el límite de Chat', () => {
+    expect(convieneReintentar(503, 800)).toBe(true)
+    // El 503 real que devolvió Google tardó bastante: reintentar ahí deja a la
+    // persona sin respuesta.
+    expect(convieneReintentar(503, 30000)).toBe(false)
+    expect(convieneReintentar(400, 800)).toBe(false)
   })
 })

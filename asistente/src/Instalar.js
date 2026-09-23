@@ -54,14 +54,24 @@ function instalar() {
   ScriptApp.newTrigger('procesarReuniones').timeBased().everyMinutes(5).create();
   ScriptApp.newTrigger('avisoMatutino').timeBased().atHour(8).everyDays(1).inTimezone(ZONA).create();
 
-  const prueba = geminiJson_(
-    [{ text: 'Respondé con ok en true.' }],
-    { type: 'OBJECT', properties: { ok: { type: 'BOOLEAN' } }, required: ['ok'] }
-  );
-  if (!prueba.ok) throw new Error('Gemini respondió, pero no lo esperado: ' + JSON.stringify(prueba));
+  // Una clave inválida o un modelo retirado frenan la instalación: hay que
+  // corregirlos. Que el modelo esté saturado, no: Google ya aceptó la clave
+  // para llegar a decir eso, y se arregla solo.
+  let estadoGemini = 'la clave de Gemini funciona.';
+  try {
+    const prueba = geminiJson_(
+      [{ text: 'Respondé con ok en true.' }],
+      { type: 'OBJECT', properties: { ok: { type: 'BOOLEAN' } }, required: ['ok'] }
+    );
+    if (!prueba.ok) throw new Error('Gemini respondió, pero no lo esperado: ' + JSON.stringify(prueba));
+  } catch (err) {
+    if (!err.pasajero) throw err;
+    estadoGemini = 'Google aceptó la clave, pero Gemini está saturado en este momento. ' +
+      'Los primeros mensajes pueden fallar unos minutos.';
+  }
 
   console.log([
-    'Listo. Todo instalado y la clave de Gemini funciona.',
+    'Listo. Todo instalado y ' + estadoGemini,
     '',
     'Carpeta: ' + carpeta.getUrl(),
     'Base:    ' + base.getUrl(),

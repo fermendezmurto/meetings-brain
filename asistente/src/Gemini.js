@@ -37,18 +37,27 @@ function geminiConUso_(partes, esquema, opciones) {
   const razonamiento = configRazonamiento(modelo, opciones.razonamiento);
   if (razonamiento) generacion.thinkingConfig = razonamiento;
 
+  let inicio = Date.now();
   let r = pedirGemini_(modelo, partes, generacion);
   // Si el modelo no acepta cómo se le acotó el razonamiento, se pide de nuevo
   // sin acotarlo: más lento, pero contesta.
   if (r.getResponseCode() === 400 && generacion.thinkingConfig && /thinking/i.test(r.getContentText())) {
     delete generacion.thinkingConfig;
+    inicio = Date.now();
+    r = pedirGemini_(modelo, partes, generacion);
+  }
+  if (convieneReintentar(r.getResponseCode(), Date.now() - inicio)) {
+    Utilities.sleep(3000);
     r = pedirGemini_(modelo, partes, generacion);
   }
 
   const codigo = r.getResponseCode();
   const cuerpo = r.getContentText();
   if (codigo === 429) {
-    throw new Error('Gemini llegó al límite de pedidos del nivel gratuito. Probá de nuevo en un rato.');
+    throw errorPasajero_('Gemini llegó al límite de pedidos del nivel gratuito. Probá de nuevo en un rato.');
+  }
+  if (esErrorPasajero(codigo)) {
+    throw errorPasajero_('Gemini está saturado en este momento. Suele pasar unos minutos: probá de nuevo en un rato.');
   }
   if (codigo === 404 && /no longer available|not found/i.test(cuerpo)) {
     throw new Error(mensajeModeloRetirado(modelo, cuerpo));
@@ -67,6 +76,13 @@ function geminiConUso_(partes, esquema, opciones) {
     .join('');
   if (!texto) throw new Error('Gemini devolvió una respuesta vacía (' + candidato.finishReason + ').');
   return { datos: JSON.parse(texto), uso: datos.usageMetadata || {} };
+}
+
+/** Un error que se arregla solo esperando: quien lo recibe puede reintentar. */
+function errorPasajero_(mensaje) {
+  const e = new Error(mensaje);
+  e.pasajero = true;
+  return e;
 }
 
 function pedirGemini_(modelo, partes, generacion) {

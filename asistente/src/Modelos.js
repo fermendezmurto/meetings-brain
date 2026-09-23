@@ -32,3 +32,21 @@ function mensajeModeloRetirado(modelo, cuerpo) {
     ? 'En Propiedades del script, poné GEMINI_MODEL = ' + sugerido + ' y volvé a probar.'
     : 'En Propiedades del script, cambiá GEMINI_MODEL por un modelo vigente.');
 }
+
+/**
+ * Errores de Gemini que se arreglan solos esperando: saturación del modelo y
+ * fallas momentáneas del servidor. Con el nivel gratuito y un modelo recién
+ * lanzado son frecuentes, y no tienen que tratarse como si algo estuviera roto.
+ */
+function esErrorPasajero(codigo) {
+  return codigo === 500 || codigo === 502 || codigo === 503 || codigo === 504;
+}
+
+/**
+ * Reintentar solo sirve si el fallo fue rápido. Si Gemini tardó en rechazar el
+ * pedido, reintentar pasaría el límite de 30 segundos de Chat y el de 60 de
+ * Apps Script, y la persona se quedaría sin ninguna respuesta.
+ */
+function convieneReintentar(codigo, milisegundos) {
+  return esErrorPasajero(codigo) && milisegundos < 10000;
+}

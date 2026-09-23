@@ -18,6 +18,11 @@
  */
 
 const MAX_INTENTOS = 3;
+/**
+ * Si el problema es que Gemini está saturado, se sigue probando durante una
+ * hora (una vez cada cinco minutos) antes de avisar que no se pudo.
+ */
+const MAX_INTENTOS_PASAJEROS = 12;
 const MAX_FALLAS_TRANSCRIPCION = 5;
 /** Margen antes del corte de seis minutos de Apps Script. */
 const PRESUPUESTO_MS = 4 * 60 * 1000;
@@ -63,7 +68,7 @@ function procesarPendientes_() {
 
   // Primero las que todavía no tienen minuta: es lo que alguien está esperando.
   const antesDeLaMinuta = reuniones_().filter(function (r) {
-    return (r.estado === 'recibida' || r.estado === 'subida') && r.intentos < MAX_INTENTOS;
+    return r.estado === 'recibida' || r.estado === 'subida';
   });
   for (let i = 0; i < antesDeLaMinuta.length && quedaTiempo(); i++) {
     const r = antesDeLaMinuta[i];
@@ -104,12 +109,14 @@ function mensajeDe_(err) {
 function registrarFalla_(r, err) {
   console.error('Reunión ' + r.id + ': ' + (err && err.stack ? err.stack : err));
   const intentos = r.intentos + 1;
+  const limite = err && err.pasajero ? MAX_INTENTOS_PASAJEROS : MAX_INTENTOS;
+  const seRinde = intentos >= limite;
   actualizarReunion_(r, {
     intentos: intentos,
     error: mensajeDe_(err),
-    estado: intentos >= MAX_INTENTOS ? 'error' : r.estado,
+    estado: seRinde ? 'error' : r.estado,
   });
-  if (intentos >= MAX_INTENTOS) avisarFalla_(r);
+  if (seRinde) avisarFalla_(r);
 }
 
 /** Sube el audio a Gemini si no está, o si está por vencer. */
