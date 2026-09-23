@@ -29,11 +29,18 @@ describe('manifiesto', () => {
       [/MailApp\./, 'script.send_mail'],
       [/ScriptApp\.newTrigger/, 'script.scriptapp'],
       [/chat\.googleapis\.com\/v1\/media/, 'chat.messages.readonly'],
+      [/CalendarApp\./, 'calendar'],
+      [/Tasks\.Tasks\./, 'tasks'],
     ]
     for (const [uso, permiso] of necesarios) {
       expect(uso.test(codigo), `el código no usa ${uso}`).toBe(true)
       expect(m.oauthScopes).toContain(`https://www.googleapis.com/auth/${permiso}`)
     }
+  })
+
+  it('habilita el servicio avanzado de Google Tasks que usa el código', () => {
+    const servicios = m.dependencies.enabledAdvancedServices
+    expect(servicios).toContainEqual({ userSymbol: 'Tasks', version: 'v1', serviceId: 'tasks' })
   })
 
   it('el que se pega en Apps Script es el mismo', () => {

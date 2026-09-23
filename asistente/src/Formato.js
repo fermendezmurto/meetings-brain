@@ -29,7 +29,7 @@ function textoBienvenida(nombre) {
 
 /** Una tarea en una línea: "#12 Enviar el presupuesto — Diana · vie 26/09". */
 function lineaTarea(t, hoy, mostrarResponsable) {
-  const plazo = formatearPlazo(t.plazo, hoy);
+  const plazo = formatearCuando(t.plazo, t.hora, hoy);
   let linea = '*#' + t.numero + '* ' + t.que;
   if (mostrarResponsable) linea += ' — ' + (t.responsable || 'sin responsable');
   if (plazo) linea += ' · ' + (plazo.indexOf('vencida') === 0 ? '*' + plazo + '*' : plazo);
@@ -73,6 +73,7 @@ function confirmarAnotadas(respuesta, anotadas, hoy) {
   const lineas = [respuesta, ''];
   anotadas.forEach(function (a) {
     lineas.push('• ' + lineaTarea(a.tarea, hoy, true));
+    if (a.nota) lineas.push('   ' + a.nota);
     if (a.problema) lineas.push('   ' + a.problema);
   });
   return lineas.join('\n').trim();
@@ -112,4 +113,39 @@ function seccionesMinuta(m) {
     { titulo: 'Preguntas abiertas', items: m.preguntasAbiertas || [], vacio: 'Ninguna' },
     { titulo: 'Riesgos', items: m.riesgos || [], vacio: 'Ninguno mencionado' },
   ];
+}
+
+/**
+ * La minuta en la forma estable que puede leer otro sistema. Si cambia, se
+ * sube "version" y se documenta en asistente/DATOS.md.
+ */
+function datosDeMinuta(r, m, fecha, duracion, enlaces, anotadas) {
+  return {
+    version: 1,
+    tipo: 'minuta',
+    id: r.id,
+    fecha: fecha,
+    recibida: r.recibida,
+    titulo: m.titulo || '',
+    grabo: { nombre: r.grabo, email: r.email },
+    nota: r.nota || '',
+    duracionMinutos: duracion,
+    resumen: m.resumen || '',
+    participantes: (m.participantes || []).map(function (p) {
+      return { nombre: p.nombre, rol: p.rol || '' };
+    }),
+    decisiones: m.decisiones || [],
+    compromisos: anotadas.map(function (a) {
+      return {
+        tarea: a.tarea.numero,
+        que: a.tarea.que,
+        responsable: a.tarea.responsable || '',
+        email: a.tarea.emailResponsable || '',
+        plazo: a.tarea.plazo || '',
+      };
+    }),
+    preguntasAbiertas: m.preguntasAbiertas || [],
+    riesgos: m.riesgos || [],
+    enlaces: enlaces,
+  };
 }

@@ -63,6 +63,9 @@ function responder_(evento) {
   const quien = quienEscribe_(evento);
   if (!quien.email) return 'No pude saber quién sos. Escribime desde tu cuenta de la empresa.';
   registrarPersona_(quien.nombre, quien.email);
+  // Es el momento en que el Asistente corre con la cuenta de esta persona: se
+  // aprovecha para poner al día su Google Tasks con la base.
+  sincronizarGoogleTasks_(quien.email);
 
   const texto = textoDelMensaje(evento.mensaje);
   const adjunto = adjuntoDeAudio(evento.mensaje);
@@ -209,58 +212,124 @@ function interpretarNota_(quien, entrada) {
 }
 
 /**
- * Anota cada tarea y le avisa a su responsable.
+ * Anota cada cosa en la base y la lleva a donde la persona la va a mirar: los
+ * eventos al calendario, las tareas a Google Tasks o al correo.
  *
- * Si el nombre no se puede atar a una persona concreta, la tarea se anota
- * igual pero se dice por qué no se avisó: una tarea que el responsable no sabe
- * que tiene es una tarea que no existe.
+ * Si el nombre no se puede atar a una persona concreta, se anota igual pero se
+ * dice por qué no se avisó: una tarea que el responsable no sabe que tiene es
+ * una tarea que no existe. Y si Calendar o Tasks fallan, lo anotado no se
+ * pierde: queda en la base y se dice qué no se pudo hacer.
  *
  * @param {boolean} sinResponsableEsQuienPide en una nota, "recordame" es para
  *   quien habla. En una reunión, un compromiso sin dueño queda sin dueño.
  */
-function anotarTareas_(tareas, origen, gente, sinResponsableEsQuienPide) {
-  return tareas.map(function (t) {
-    let responsable = String(t.responsable || '').trim();
-    let email = '';
-    let problema = '';
-
-    if (!responsable && sinResponsableEsQuienPide) {
-      responsable = origen.pidio;
-      email = origen.emailPidio;
-    } else if (responsable) {
-      const b = buscarPersona(gente, responsable);
-      if (b.persona) {
-        responsable = b.persona.nombre;
-        email = b.persona.email;
-      } else if (b.candidatos.length > 1) {
-        problema = 'Hay más de una persona que coincide con "' + responsable + '" (' +
-          b.candidatos.map(function (p) { return p.nombre; }).join(', ') +
-          '). No le avisé a nadie: cerrala y pedila de nuevo con el nombre completo.';
-      } else {
-        problema = 'Todavía no conozco a "' + responsable + '", así que no le pude avisar. ' +
-          'Pedile que me escriba una vez y queda registrado.';
-      }
-    }
+function anotarTareas_(items, origen, gente, sinResponsableEsQuienPide) {
+  const yo = usuarioActual_();
+  return items.map(function (item) {
+    const quien = resolverResponsable_(item, origen, gente, sinResponsableEsQuienPide);
+    const tipo = clasificarItem(item);
 
     const tarea = agregarTarea_({
-      que: t.que,
-      responsable: responsable,
-      emailResponsable: email,
-      plazo: esFechaIso(t.plazo) ? t.plazo : '',
+      que: item.que,
+      responsable: quien.nombre,
+      emailResponsable: quien.email,
+      plazo: esFechaIso(item.plazo) ? item.plazo : '',
+      hora: normalizarHora(item.hora),
+      tipo: tipo,
       pidio: origen.pidio,
       emailPidio: origen.emailPidio,
       origen: origen.origen,
       enlace: origen.enlace,
+      reunion: origen.reunion || '',
     });
-    if (email && email !== origen.emailPidio) avisarTarea_(tarea, origen);
-    return { tarea: tarea, problema: problema };
+
+    const resultado = { tarea: tarea, problema: quien.problema, nota: '' };
+    try {
+      if (tipo === 'evento') {
+        agendar_(tarea, item, quien, origen, gente, resultado);
+      } else if (quien.email && quien.email === yo) {
+        actualizarTarea_(tarea, { idTasks: crearGoogleTask_(tarea) });
+        resultado.nota = 'En tu Google Tasks.';
+      } else if (quien.email) {
+        avisarTarea_(tarea, origen);
+        resultado.nota = 'Le avisé por correo.';
+      }
+    } catch (err) {
+      console.error(err && err.stack ? err.stack : err);
+      const donde = tipo === 'evento' ? 'agendarlo en el calendario' : 'pasarlo a Google Tasks';
+      resultado.problema = [resultado.problema, 'Quedó anotado, pero no pude ' + donde + ': ' +
+        (err && err.message ? err.message : err)].filter(String).join(' ');
+    }
+    return resultado;
   });
+}
+
+function resolverResponsable_(item, origen, gente, sinResponsableEsQuienPide) {
+  const nombre = String(item.responsable || '').trim();
+  if (!nombre) {
+    return sinResponsableEsQuienPide
+      ? { nombre: origen.pidio, email: origen.emailPidio, problema: '' }
+      : { nombre: '', email: '', problema: '' };
+  }
+  const b = buscarPersona(gente, nombre);
+  if (b.persona) return { nombre: b.persona.nombre, email: b.persona.email, problema: '' };
+  if (b.candidatos.length > 1) {
+    return {
+      nombre: nombre,
+      email: '',
+      problema: 'Hay más de una persona que coincide con "' + nombre + '" (' +
+        b.candidatos.map(function (p) { return p.nombre; }).join(', ') +
+        '). No le avisé a nadie: cerrala y pedila de nuevo con el nombre completo.',
+    };
+  }
+  return {
+    nombre: nombre,
+    email: '',
+    problema: 'Todavía no conozco a "' + nombre + '", así que no le pude avisar. ' +
+      'Pedile que me escriba una vez y queda registrado.',
+  };
+}
+
+/**
+ * El evento va al calendario de quien lo pidió. Se invita a los participantes
+ * que el Asistente conoce, y al responsable si es otra persona.
+ */
+function agendar_(tarea, item, quien, origen, gente, resultado) {
+  const invitados = [];
+  const nombres = [];
+  const desconocidos = [];
+  (item.participantes || []).concat(quien.email && quien.email !== origen.emailPidio ? [quien.nombre] : [])
+    .forEach(function (n) {
+      const b = buscarPersona(gente, n);
+      if (b.persona && b.persona.email !== origen.emailPidio && invitados.indexOf(b.persona.email) === -1) {
+        invitados.push(b.persona.email);
+        nombres.push(nombreDePila_(b.persona.nombre));
+      } else if (!b.persona) {
+        desconocidos.push(n);
+      }
+    });
+
+  actualizarTarea_(tarea, { idCalendar: crearEvento_(tarea, invitados, item.duracionMinutos) });
+  resultado.nota = 'Lo agendé en tu calendario' + (nombres.length ? ' e invité a ' + nombres.join(', ') : '') + '.';
+  if (desconocidos.length) {
+    resultado.nota += ' No conozco a ' + desconocidos.join(', ') + ', así que no pude invitarl' +
+      (desconocidos.length > 1 ? 'os' : 'o') + '.';
+  }
 }
 
 function cerrar_(quien, numero) {
   const r = cerrarTarea_(numero, quien.email);
   if (!r.ok) return r.motivo;
   const t = r.tarea;
+  // Si la tarea es de otra persona, su Google Tasks se pone al día la próxima
+  // vez que esa persona le escriba al Asistente.
+  if (t.idTasks && t.emailResponsable === quien.email) {
+    try {
+      completarEnTasks_(t.idTasks);
+    } catch (err) {
+      console.error(err && err.stack ? err.stack : err);
+    }
+  }
   // Cierra el círculo: quien pidió algo se entera cuando está hecho.
   if (t.emailPidio && t.emailPidio !== quien.email) avisarCierre_(t, quien);
   return 'Cerrada la *#' + numero + '* ' + t.que + '.' +

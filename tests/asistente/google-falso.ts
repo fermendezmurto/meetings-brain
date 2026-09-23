@@ -26,6 +26,9 @@ export interface Guion {
   modelosRetirados?: string[]
   /** El modelo rechaza la forma en que se le acota el razonamiento. */
   rechazaRazonamiento?: boolean
+  /** Calendar o Tasks sin habilitar en el proyecto. */
+  fallaCalendar?: boolean
+  fallaTasks?: boolean
 }
 
 export function crearGoogle(opciones: { ahora: string; guion?: Guion }) {
@@ -40,6 +43,66 @@ export function crearGoogle(opciones: { ahora: string; guion?: Guion }) {
   const medios = new Map<string, { bytes: Buffer; tipo: string }>()
 
   let contexto: any
+
+  // --- Quién está usando el Asistente: cada persona tiene su calendario y su lista ---
+  const DUENIO = 'fernando@empresa.com'
+  let usuario = DUENIO
+  const eventos: any[] = []
+  const listas = new Map<string, Map<string, any>>()
+  const listaDe = (email: string) => {
+    if (!listas.has(email)) listas.set(email, new Map())
+    return listas.get(email)!
+  }
+  const APAGADA = (api: string) => new Error(`${api} has not been used in project 601153146863 before or it is disabled.`)
+
+  const Session = { getEffectiveUser: () => ({ getEmail: () => usuario }) }
+
+  const CalendarApp = {
+    getDefaultCalendar: () => {
+      if (guion.fallaCalendar) throw APAGADA('Google Calendar API')
+      const duenio = usuario
+      const crear = (datos: any) => {
+        const id = 'evento-' + randomUUID().slice(0, 8)
+        eventos.push({ id, duenio, ...datos })
+        return { getId: () => id }
+      }
+      return {
+        getName: () => duenio,
+        createEvent: (titulo: string, inicio: Date, fin: Date, op: any = {}) =>
+          crear({ titulo, inicio: new Date(inicio.getTime()), fin: new Date(fin.getTime()), todoElDia: false, ...op }),
+        createAllDayEvent: (titulo: string, dia: Date, op: any = {}) =>
+          crear({ titulo, inicio: new Date(dia.getTime()), todoElDia: true, ...op }),
+      }
+    },
+  }
+
+  const Tasks = {
+    Tasklists: {
+      list: () => {
+        if (guion.fallaTasks) throw APAGADA('Google Tasks API')
+        return { items: [{ id: '@default' }] }
+      },
+    },
+    Tasks: {
+      insert: (t: any, lista: string) => {
+        if (guion.fallaTasks) throw APAGADA('Google Tasks API')
+        const id = 'task-' + randomUUID().slice(0, 8)
+        listaDe(usuario).set(id, { ...t, id, lista, status: 'needsAction' })
+        return { id }
+      },
+      list: () => {
+        if (guion.fallaTasks) throw APAGADA('Google Tasks API')
+        return { items: [...listaDe(usuario).values()] }
+      },
+      patch: (cambios: any, _lista: string, id: string) => {
+        if (guion.fallaTasks) throw APAGADA('Google Tasks API')
+        const t = listaDe(usuario).get(id)
+        if (!t) throw new Error('Not Found')
+        Object.assign(t, cambios)
+        return t
+      },
+    },
+  }
 
   // --- Blobs y Drive ---
   class Blob {
@@ -343,6 +406,11 @@ export function crearGoogle(opciones: { ahora: string; guion?: Guion }) {
     LockService: { getScriptLock: () => ({ waitLock: () => {}, tryLock: () => true, releaseLock: () => {} }) },
     Utilities: {
       formatDate: formatear,
+      // Paraguay está en UTC-3 todo el año.
+      parseDate: (texto: string, _zona: string, formato: string) => {
+        const [fecha, hora = '00:00'] = formato.includes('HH') ? texto.split(' ') : [texto]
+        return new contexto.Date(`${fecha}T${hora}:00-03:00`)
+      },
       getUuid: () => randomUUID(),
       base64Encode: (bytes: number[]) => Buffer.from(bytes).toString('base64'),
       sleep: () => {},
@@ -363,7 +431,7 @@ export function crearGoogle(opciones: { ahora: string; guion?: Guion }) {
       },
     },
     MailApp: { sendEmail: (m: any) => { correos.push(m) } },
-    SpreadsheetApp, DriveApp, DocumentApp, UrlFetchApp,
+    SpreadsheetApp, DriveApp, DocumentApp, UrlFetchApp, Session, CalendarApp, Tasks,
   }
 
   contexto = vm.createContext(globales)
@@ -393,6 +461,20 @@ export function crearGoogle(opciones: { ahora: string; guion?: Guion }) {
       const recurso = 'adjunto/' + randomUUID().slice(0, 8)
       medios.set(recurso, { bytes: Buffer.alloc(bytes, 7), tipo })
       return { contentType: tipo, contentName: 'grabacion', attachmentDataRef: { resourceName: recurso } }
+    },
+    eventos,
+    DUENIO,
+    /** La lista de Google Tasks de una persona. */
+    tasksDe: (email: string) => [...listaDe(email).values()],
+    /** Corre algo con la cuenta de otra persona, como lo hace Chat. */
+    comoUsuario<T>(email: string, fn: () => T): T {
+      const antes = usuario
+      usuario = email
+      try {
+        return fn()
+      } finally {
+        usuario = antes
+      }
     },
     hoja(nombre: string) {
       return SpreadsheetApp.openById(props.get('BASE_ID')!).getSheetByName(nombre).filas

@@ -8,8 +8,10 @@
  */
 
 const HOJAS = {
+  // Las columnas nuevas van siempre al final: las filas viejas siguen valiendo.
   tareas: ['N', 'Creada', 'Qué', 'Responsable', 'Email responsable', 'Plazo', 'Estado',
-    'Pidió', 'Email pidió', 'Origen', 'Enlace', 'Cerrada'],
+    'Pidió', 'Email pidió', 'Origen', 'Enlace', 'Cerrada', 'Tipo', 'Hora',
+    'ID en Calendar', 'ID en Google Tasks', 'Reunión'],
   reuniones: ['ID', 'Recibida', 'Título', 'Grabó', 'Email', 'Nota', 'Carpeta', 'Audio',
     'Tipo', 'Estado', 'Transcripción', 'Minuta', 'Error', 'Intentos', 'Archivo en Gemini',
     'Subido a Gemini', 'Duración (min)', 'Transcripto hasta (min)', 'Participantes',
@@ -81,7 +83,23 @@ function filaATarea_(f, i) {
     emailPidio: String(f[8]).toLowerCase(),
     origen: String(f[9]),
     enlace: String(f[10]),
+    cerrada: String(f[11]),
+    tipo: String(f[12]) || 'tarea',
+    hora: String(f[13]),
+    idCalendar: String(f[14]),
+    idTasks: String(f[15]),
+    reunion: String(f[16]),
   };
+}
+
+const COLUMNA_TAREA = { estado: 7, cerrada: 12, idCalendar: 15, idTasks: 16 };
+
+function actualizarTarea_(t, cambios) {
+  const h = hoja_('tareas');
+  Object.keys(cambios).forEach(function (k) {
+    h.getRange(t.fila, COLUMNA_TAREA[k]).setValue(cambios[k]);
+    t[k] = cambios[k];
+  });
 }
 
 function tareas_() {
@@ -92,27 +110,44 @@ function agregarTarea_(t) {
   return conCandado_(function () {
     const numeros = tareas_().map(function (x) { return x.numero || 0; });
     const numero = (numeros.length ? Math.max.apply(null, numeros) : 0) + 1;
-    hoja_('tareas').appendRow([
+    const h = hoja_('tareas');
+    h.appendRow([
       numero, ahora_(), t.que, t.responsable || '', (t.emailResponsable || '').toLowerCase(),
-      // El apóstrofo le dice a Sheets que es texto, no una fecha.
+      // El apóstrofo le dice a Sheets que es texto, no una fecha ni una hora.
       t.plazo ? "'" + t.plazo : '', 'abierta', t.pidio, (t.emailPidio || '').toLowerCase(),
-      t.origen, t.enlace || '', '',
+      t.origen, t.enlace || '', '', t.tipo || 'tarea', t.hora ? "'" + t.hora : '', '', '',
+      t.reunion || '',
     ]);
     t.numero = numero;
+    t.fila = h.getLastRow();
+    t.estado = 'abierta';
+    t.idCalendar = '';
+    t.idTasks = '';
     return t;
   });
 }
 
+/** Lo que la persona tiene por delante: sin lo cerrado ni los eventos que ya pasaron. */
 function pendientesDe_(email) {
   email = String(email).toLowerCase();
-  return tareas_().filter(function (t) { return t.estado === 'abierta' && t.emailResponsable === email; });
+  const hoy = hoy_();
+  return tareas_().filter(function (t) {
+    return t.estado === 'abierta' && t.emailResponsable === email && !yaOcurrio(t, hoy);
+  });
 }
 
 function pedidosDe_(email) {
   email = String(email).toLowerCase();
+  const hoy = hoy_();
   return tareas_().filter(function (t) {
-    return t.estado === 'abierta' && t.emailPidio === email && t.emailResponsable !== email;
+    return t.estado === 'abierta' && t.emailPidio === email && t.emailResponsable !== email && !yaOcurrio(t, hoy);
   });
+}
+
+/** Todas las tareas de una persona, abiertas o no: las necesita la sincronización. */
+function tareasDeResponsable_(email) {
+  email = String(email).toLowerCase();
+  return tareas_().filter(function (t) { return t.emailResponsable === email; });
 }
 
 /**
@@ -128,9 +163,7 @@ function cerrarTarea_(numero, email) {
     if (t.emailResponsable !== email && t.emailPidio !== email) {
       return { ok: false, motivo: 'La #' + numero + ' no es tuya ni la pediste vos, así que no la puedo cerrar.' };
     }
-    const h = hoja_('tareas');
-    h.getRange(t.fila, 7).setValue('cerrada');
-    h.getRange(t.fila, 12).setValue(ahora_());
+    actualizarTarea_(t, { estado: 'cerrada', cerrada: ahora_() });
     return { ok: true, tarea: t };
   });
 }

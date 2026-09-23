@@ -88,9 +88,12 @@ function avisoMatutino() {
   const dia = diaDeLaSemana(hoy);
   if (dia === 0 || dia === 6) return;
 
+  // Corre con la cuenta de quien instaló: es su oportunidad de sincronizar.
+  sincronizarGoogleTasks_(usuarioActual_());
+
   const porPersona = {};
   tareas_().forEach(function (t) {
-    if (t.estado !== 'abierta' || !t.emailResponsable) return;
+    if (t.estado !== 'abierta' || !t.emailResponsable || yaOcurrio(t, hoy)) return;
     (porPersona[t.emailResponsable] = porPersona[t.emailResponsable] || []).push(t);
   });
 

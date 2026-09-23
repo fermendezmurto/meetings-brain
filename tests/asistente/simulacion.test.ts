@@ -33,8 +33,9 @@ function instalado(guion = {}) {
   return g
 }
 
+// Como en Chat: el Asistente corre con la cuenta de quien le escribe.
 const escribir = (g: any, quien: any, texto: string, adjuntos: any[] = []) =>
-  g.llamar('onMessage', mensaje(quien, texto, adjuntos)).text as string
+  g.comoUsuario(quien.email, () => g.llamar('onMessage', mensaje(quien, texto, adjuntos)).text as string)
 
 describe('instalar', () => {
   it('arma la carpeta, la base y las tareas automáticas, y prueba la clave', () => {
@@ -104,7 +105,7 @@ describe('instalar', () => {
 describe('conversación', () => {
   it('saluda al que lo agrega y lo suma a la lista de la empresa', () => {
     const g = instalado()
-    const r = g.llamar('onAddedToSpace', { ...mensaje(FER, ''), type: 'ADDED_TO_SPACE' })
+    const r = g.comoUsuario(FER.email, () => g.llamar('onAddedToSpace', { ...mensaje(FER, ''), type: 'ADDED_TO_SPACE' }))
     expect(r.text).toContain('Hola, Fernando')
     expect(r.text).toContain('piloto')
     expect(g.hoja('Personas')[1].slice(0, 2)).toEqual(['Fernando Méndez', 'fernando@empresa.com'])
@@ -239,6 +240,133 @@ describe('conversación', () => {
   })
 })
 
+describe('calendario y Google Tasks', () => {
+  const RONY = { nombre: 'Rony Benítez', email: 'rony@empresa.com' }
+  const nota = (tareas: any[], respuesta = 'Anotado.') => ({ nota: { intencion: 'anotar', respuesta, tareas } })
+  const fila = (g: any, n: number) => g.hoja('Tareas')[n]
+
+  it('una reunión con hora va a tu calendario, a esa hora, con invitación a quien conoce', () => {
+    const g = instalado(nota([
+      { tipo: 'evento', que: 'Reunión con Rony', responsable: '', plazo: '2026-09-26', hora: '17:00', participantes: ['Rony'] },
+    ], 'Agendo la reunión con Rony.'))
+    escribir(g, RONY, 'hola')
+    const r = escribir(g, FER, 'reunión con Rony mañana a las 5 de la tarde')
+
+    expect(r).toContain('Reunión con Rony — Fernando Méndez · mañana 17:00')
+    expect(r).toContain('Lo agendé en tu calendario e invité a Rony.')
+
+    expect(g.eventos).toHaveLength(1)
+    const e = g.eventos[0]
+    expect(e.duenio).toBe('fernando@empresa.com')
+    // 17:00 en Asunción son las 20:00 UTC; dura una hora si no se dijo otra cosa.
+    expect(e.inicio.toISOString()).toBe('2026-09-26T20:00:00.000Z')
+    expect(e.fin.toISOString()).toBe('2026-09-26T21:00:00.000Z')
+    expect(e.guests).toBe('rony@empresa.com')
+    expect(e.sendInvites).toBe(true)
+
+    // En la base queda como evento, con la hora como texto y el id del calendario.
+    expect(fila(g, 1).slice(12, 15)).toEqual(['evento', '17:00', e.id])
+    // Un evento no va a Google Tasks, ni se manda correo: la invitación ya avisa.
+    expect(g.tasksDe(FER.email)).toHaveLength(0)
+    expect(g.correos).toHaveLength(0)
+  })
+
+  it('una reunión con fecha pero sin hora queda como evento de todo el día', () => {
+    const g = instalado(nota([{ tipo: 'evento', que: 'Visita a la planta', responsable: '', plazo: '2026-09-28' }]))
+    escribir(g, FER, 'el lunes visitamos la planta')
+    expect(g.eventos[0].todoElDia).toBe(true)
+  })
+
+  it('avisa a quién no pudo invitar porque no lo conoce', () => {
+    const g = instalado(nota([{ tipo: 'evento', que: 'Llamada', responsable: '', plazo: '2026-09-26', hora: '10:00', participantes: ['Rodolfo'] }]))
+    expect(escribir(g, FER, 'llamada con Rodolfo mañana a las 10')).toContain('No conozco a Rodolfo, así que no pude invitarlo.')
+  })
+
+  it('una tarea propia va directo a tu Google Tasks, con su fecha', () => {
+    const g = instalado(nota([{ tipo: 'tarea', que: 'Mandar la propuesta', responsable: '', plazo: '2026-09-29' }]))
+    const r = escribir(g, FER, 'recordame mandar la propuesta el martes')
+    expect(r).toContain('En tu Google Tasks.')
+
+    const [t] = g.tasksDe(FER.email)
+    expect(t.title).toBe('Mandar la propuesta')
+    expect(t.due).toBe('2026-09-29T00:00:00.000Z')
+    expect(t.notes).toContain('Tarea #1 del Asistente')
+    expect(fila(g, 1)[15]).toBe(t.id)
+  })
+
+  it('una tarea para otra persona le llega por correo, y a su Google Tasks cuando le escribe al Asistente', () => {
+    const g = instalado(nota([{ tipo: 'tarea', que: 'Enviar el presupuesto', responsable: 'Diana', plazo: '2026-09-29' }]))
+    escribir(g, DIANA, 'hola')
+    expect(escribir(g, FER, 'pedile a Diana el presupuesto')).toContain('Le avisé por correo.')
+    expect(g.correos.at(-1).to).toBe('diana@empresa.com')
+    // Google no deja escribir en la lista de otra persona.
+    expect(g.tasksDe(DIANA.email)).toHaveLength(0)
+
+    escribir(g, DIANA, 'hola')
+    const [t] = g.tasksDe(DIANA.email)
+    expect(t.title).toBe('Enviar el presupuesto')
+    expect(fila(g, 1)[15]).toBe(t.id)
+  })
+
+  it('si la persona la marca como hecha en Google Tasks, se cierra en la base y le avisa a quien la pidió', () => {
+    const g = instalado(nota([{ tipo: 'tarea', que: 'Enviar el presupuesto', responsable: 'Diana', plazo: '' }]))
+    escribir(g, DIANA, 'hola')
+    escribir(g, FER, 'pedile a Diana el presupuesto')
+    escribir(g, DIANA, 'hola')
+    g.correos.length = 0
+
+    g.tasksDe(DIANA.email)[0].status = 'completed'
+    expect(escribir(g, DIANA, 'pendientes')).toBe('No tenés nada pendiente.')
+    expect(fila(g, 1)[6]).toBe('cerrada')
+    expect(g.correos.at(-1).to).toBe('fernando@empresa.com')
+    expect(g.correos.at(-1).subject).toContain('Hecha: #1')
+  })
+
+  it('si se cierra por Chat, también se marca como hecha en Google Tasks', () => {
+    const g = instalado(nota([{ tipo: 'tarea', que: 'Llamar al banco', responsable: '', plazo: '' }]))
+    escribir(g, FER, 'recordame llamar al banco')
+    escribir(g, FER, 'listo 1')
+    expect(g.tasksDe(FER.email)[0].status).toBe('completed')
+  })
+
+  it('si quien pidió la cierra por Chat, el Google Tasks del responsable se pone al día en su próxima conversación', () => {
+    const g = instalado(nota([{ tipo: 'tarea', que: 'Enviar el presupuesto', responsable: 'Diana', plazo: '' }]))
+    escribir(g, DIANA, 'hola')
+    escribir(g, FER, 'pedile a Diana el presupuesto')
+    escribir(g, DIANA, 'hola')
+    escribir(g, FER, 'listo 1')
+    expect(g.tasksDe(DIANA.email)[0].status).toBe('needsAction')
+    escribir(g, DIANA, 'hola')
+    expect(g.tasksDe(DIANA.email)[0].status).toBe('completed')
+  })
+
+  it('un evento que ya pasó no aparece como pendiente', () => {
+    const g = instalado(nota([{ tipo: 'evento', que: 'Reunión de ayer', responsable: '', plazo: '2026-09-24', hora: '10:00' }]))
+    escribir(g, FER, 'anotá la reunión de ayer')
+    expect(escribir(g, FER, 'pendientes')).toBe('No tenés nada pendiente.')
+  })
+
+  it('si Calendar no está habilitado, lo anotado no se pierde y lo dice', () => {
+    const g = instalado({ ...nota([{ tipo: 'evento', que: 'Reunión con Rony', responsable: '', plazo: '2026-09-26', hora: '17:00' }]), fallaCalendar: true })
+    const r = escribir(g, FER, 'reunión con Rony mañana a las 5')
+    expect(r).toContain('Quedó anotado, pero no pude agendarlo en el calendario')
+    expect(fila(g, 1)[2]).toBe('Reunión con Rony')
+  })
+
+  it('si Google Tasks no está habilitado, el Asistente sigue funcionando', () => {
+    const g = instalado({ ...nota([{ tipo: 'tarea', que: 'Llamar al banco', responsable: '', plazo: '' }]), fallaTasks: true })
+    expect(escribir(g, FER, 'recordame llamar al banco')).toContain('Quedó anotado, pero no pude pasarlo a Google Tasks')
+    expect(escribir(g, FER, 'pendientes')).toContain('Llamar al banco')
+  })
+
+  it('al instalar avisa si falta habilitar Calendar o Tasks, sin frenar la instalación', () => {
+    const g = crearGoogle({ ahora: AHORA, guion: { fallaCalendar: true, fallaTasks: true } })
+    g.props.set('GEMINI_API_KEY', 'AQ.x')
+    expect(() => g.llamar('instalar')).not.toThrow()
+    expect(g.disparadores).toHaveLength(2)
+  })
+})
+
 describe('notas de voz', () => {
   it('un audio corto se entiende en el momento, mandado dentro del mismo pedido', () => {
     const g = instalado({
@@ -332,6 +460,28 @@ describe('reuniones', () => {
 
     const carpeta = [...g.carpetas.values()].find((c) => c.nombre.includes('Seguimiento'))
     expect(carpeta.nombre).toBe('2026-09-25 — Seguimiento comercial')
+
+    // Al lado del documento, la minuta como datos para el cerebro de la empresa.
+    const archivoDatos = [...g.archivos.values()].find((a) => a.getName() === 'minuta.json')
+    expect(archivoDatos.carpeta).toBe(carpeta.id)
+    const minuta = JSON.parse(archivoDatos.getBlob().getDataAsString())
+    expect(minuta).toMatchObject({ version: 1, tipo: 'minuta', titulo: 'Seguimiento comercial', duracionMinutos: 25 })
+    expect(minuta.compromisos[0]).toEqual({
+      tarea: 1, que: 'Cerrar el presupuesto', responsable: 'Diana Valiente', email: 'diana@empresa.com', plazo: '2026-09-29',
+    })
+    expect(minuta.enlaces.minuta).toContain('docs.google.com/document')
+    // Cada tarea sabe de qué reunión salió.
+    expect(g.hoja('Tareas')[1][16]).toBe(fila(g)[0])
+  })
+
+  it('un compromiso de quien instaló va directo a su Google Tasks', () => {
+    const g = reunionEnCola({
+      minutosDeAudio: 5,
+      tramo: { turnos: [] },
+      minuta: { ...MINUTA, compromisos: [{ que: 'Mandar el acta', responsable: 'Fernando Méndez', plazo: '' }] },
+    })
+    g.llamar('procesarReuniones')
+    expect(g.tasksDe(FER.email).map((t: any) => t.title)).toEqual(['Mandar el acta'])
   })
 
   it('la transcripción se completa de a tramos y reemplaza el aviso en el documento', () => {

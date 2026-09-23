@@ -47,3 +47,10 @@ function fechaParaElModelo(hoyIso) {
   const p = hoyIso.split('-');
   return DIAS_LARGOS[diaDeLaSemana(hoyIso)] + ' ' + p[2] + '/' + p[1] + '/' + p[0];
 }
+
+/** "mañana 17:00", "vie 26/09", "hoy". La hora se agrega si la hay. */
+function formatearCuando(plazoIso, hora, hoyIso) {
+  const dia = formatearPlazo(plazoIso, hoyIso);
+  if (!dia) return '';
+  return esHora(hora) ? dia + ' ' + normalizarHora(hora) : dia;
+}

@@ -4,7 +4,9 @@ Un contacto más en Google Chat, "Asistente", al que cualquiera de la empresa le
 escribe o le manda un audio:
 
 - **"Pedile a Diana el presupuesto para el martes"** → a Diana le llega la tarea
-  por correo, de tu parte.
+  por correo, de tu parte, y aparece en su Google Tasks.
+- **"Reunión con Rony mañana a las 5"** → queda en tu Google Calendar, con
+  invitación a Rony.
 - **Un audio de una reunión** → te llega la minuta por correo, y cada responsable
   recibe sus tareas.
 - **"pendientes"**, **"pedidos"**, **"listo 12"** → para ver y cerrar tareas.
@@ -101,6 +103,8 @@ elegido, buscá cada una y tocá **Habilitar**:
 - Google Sheets API
 - Google Docs API
 - Google Chat API
+- Google Calendar API
+- Google Tasks API
 
 Después volvé a correr **instalar**: al cambiar de proyecto se pierden los
 permisos que habías dado, y así se vuelven a pedir.
@@ -205,6 +209,29 @@ Para ver qué hizo el Asistente por dentro: en script.google.com, menú de la
 izquierda → **Ejecuciones**.
 
 ---
+
+## Calendar y Google Tasks
+
+- Si lo que se dicta tiene **hora**, o es una **reunión, llamada o visita** con
+  fecha, va al **calendario** de quien lo pidió, con invitación a los demás
+  participantes que el Asistente conoce.
+- Si es algo **para hacer**, va a **Google Tasks**:
+  - Si es tuyo, aparece en tu lista en el momento.
+  - Si es de otra persona, le llega por correo en el momento, y aparece en
+    **su** Google Tasks la próxima vez que ella le escriba al Asistente. Google
+    no deja escribir en la lista de otra persona sin un permiso del
+    administrador de Workspace.
+- **En los dos sentidos:** marcar una tarea como hecha en Google Tasks la
+  cierra en el Asistente y le avisa a quien la pidió; cerrarla por Chat la
+  marca como hecha en Google Tasks.
+- Borrar una tarea de Google Tasks no la cierra: sigue en el resumen de la
+  mañana hasta que alguien escriba *listo*.
+
+## Para conectar otros sistemas
+
+La forma de todo lo que guarda el Asistente está en [DATOS.md](DATOS.md). Cada
+reunión deja, además del documento, un `minuta.json` con decisiones,
+compromisos, participantes y riesgos como datos.
 
 ## Actualizar a una versión nueva
 

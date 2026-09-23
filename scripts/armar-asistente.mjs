@@ -10,8 +10,8 @@ import { fileURLToPath } from 'node:url'
 const raiz = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'asistente')
 
 export const ORDEN = [
-  'Config.js', 'Modelos.js', 'Texto.js', 'Fechas.js', 'Intencion.js', 'Eventos.js', 'Prompts.js',
-  'Formato.js', 'Base.js', 'Gemini.js', 'Avisos.js', 'Chat.js', 'Reuniones.js', 'Instalar.js',
+  'Config.js', 'Modelos.js', 'Texto.js', 'Fechas.js', 'Agenda.js', 'Intencion.js', 'Eventos.js', 'Prompts.js',
+  'Formato.js', 'Base.js', 'Gemini.js', 'Google.js', 'Avisos.js', 'Chat.js', 'Reuniones.js', 'Instalar.js',
 ]
 
 export function armar() {

@@ -40,6 +40,7 @@ function instalar() {
   });
   // Los plazos son texto: si Sheets los toma como fecha, les agrega hora y zona.
   base.getSheetByName('Tareas').getRange('F:F').setNumberFormat('@');
+  base.getSheetByName('Tareas').getRange('N:N').setNumberFormat('@');
   const sobrante = base.getSheets().filter(function (h) {
     return Object.keys(NOMBRE_HOJA).map(function (k) { return NOMBRE_HOJA[k]; }).indexOf(h.getName()) === -1;
   });
@@ -70,8 +71,23 @@ function instalar() {
       'Los primeros mensajes pueden fallar unos minutos.';
   }
 
+  const faltan = [];
+  try {
+    CalendarApp.getDefaultCalendar().getName();
+  } catch (err) {
+    faltan.push('Google Calendar API (' + (err && err.message ? err.message : err) + ')');
+  }
+  try {
+    Tasks.Tasklists.list({ maxResults: 1 });
+  } catch (err) {
+    faltan.push('Google Tasks API (' + (err && err.message ? err.message : err) + ')');
+  }
+
   console.log([
     'Listo. Todo instalado y ' + estadoGemini,
+    faltan.length
+      ? '\nATENCIÓN: no pude usar ' + faltan.join(' ni ') + '. Habilitala en el proyecto de Google Cloud y volvé a correr instalar. Mientras tanto, las tareas se anotan igual.'
+      : '',
     '',
     'Carpeta: ' + carpeta.getUrl(),
     'Base:    ' + base.getUrl(),

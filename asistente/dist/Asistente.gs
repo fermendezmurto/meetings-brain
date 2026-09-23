@@ -221,6 +221,79 @@ function fechaParaElModelo(hoyIso) {
   return DIAS_LARGOS[diaDeLaSemana(hoyIso)] + ' ' + p[2] + '/' + p[1] + '/' + p[0];
 }
 
+/** "mañana 17:00", "vie 26/09", "hoy". La hora se agrega si la hay. */
+function formatearCuando(plazoIso, hora, hoyIso) {
+  const dia = formatearPlazo(plazoIso, hoyIso);
+  if (!dia) return '';
+  return esHora(hora) ? dia + ' ' + normalizarHora(hora) : dia;
+}
+
+// ===== Agenda.js =====
+
+/**
+ * Qué va al calendario y qué va a Google Tasks. Sin dependencias de Google,
+ * para poder probarlo afuera.
+ *
+ * Un evento ocurre en un momento: una reunión, una llamada, algo con hora. Una
+ * tarea es algo que alguien tiene que hacer para una fecha. La diferencia
+ * importa porque cada una va a donde la persona la va a mirar: los eventos al
+ * calendario, las tareas a su lista.
+ */
+
+/** "17:00", "9:30". */
+function esHora(texto) {
+  return /^([01]?\d|2[0-3]):[0-5]\d$/.test(String(texto || ''));
+}
+
+/** Siempre con dos dígitos: "9:30" pasa a "09:30". */
+function normalizarHora(texto) {
+  if (!esHora(texto)) return '';
+  const p = String(texto).split(':');
+  return (p[0].length === 1 ? '0' : '') + p[0] + ':' + p[1];
+}
+
+/**
+ * Sin fecha no hay dónde poner un evento en el calendario: queda como tarea.
+ * Con fecha, es evento si el modelo dijo que lo es o si se dijo una hora
+ * ("recordame llamar al banco el lunes a las 10" es un momento, no un plazo).
+ */
+function clasificarItem(item) {
+  if (!esFechaIso(item.plazo)) return 'tarea';
+  if (item.tipo === 'evento' || esHora(item.hora)) return 'evento';
+  return 'tarea';
+}
+
+/** Un evento cuyo día ya pasó no está pendiente: ya ocurrió. */
+function yaOcurrio(t, hoy) {
+  return t.tipo === 'evento' && esFechaIso(t.plazo) && t.plazo < hoy;
+}
+
+/**
+ * Qué hay que hacer para que la base y el Google Tasks de una persona digan lo
+ * mismo. Se decide acá y se ejecuta afuera, así la regla se puede probar.
+ *
+ * @param {Object[]} suyas   tareas de la base de las que la persona es responsable
+ * @param {Object}   enTasks estado en su Google Tasks, por id: 'needsAction' | 'completed'
+ * @return {{crear: Object[], cerrarEnBase: Object[], completarEnTasks: Object[]}}
+ */
+function planDeSincronizacion(suyas, enTasks) {
+  const plan = { crear: [], cerrarEnBase: [], completarEnTasks: [] };
+  suyas.forEach(function (t) {
+    if (t.tipo === 'evento') return;
+    const estado = t.idTasks ? enTasks[t.idTasks] : undefined;
+    if (t.estado === 'abierta') {
+      // Si la persona la borró de su lista, no se vuelve a crear: sería
+      // insistirle con algo que sacó a propósito. Sigue en la base y en el
+      // resumen de la mañana.
+      if (!t.idTasks) plan.crear.push(t);
+      else if (estado === 'completed') plan.cerrarEnBase.push(t);
+    } else if (t.idTasks && estado === 'needsAction') {
+      plan.completarEnTasks.push(t);
+    }
+  });
+  return plan;
+}
+
 // ===== Intencion.js =====
 
 /**
@@ -340,11 +413,15 @@ const ESQUEMA_NOTA = {
       items: {
         type: 'OBJECT',
         properties: {
+          tipo: { type: 'STRING', enum: ['tarea', 'evento'] },
           que: { type: 'STRING' },
           responsable: { type: 'STRING' },
           plazo: { type: 'STRING' },
+          hora: { type: 'STRING' },
+          duracionMinutos: { type: 'INTEGER' },
+          participantes: { type: 'ARRAY', items: { type: 'STRING' } },
         },
-        required: ['que'],
+        required: ['tipo', 'que'],
       },
     },
     respuesta: { type: 'STRING' },
@@ -380,14 +457,22 @@ function promptNota(ctx) {
     '- "pedidos": pregunta por lo que les pidió a otros.',
     '- "otra": nada de lo anterior.',
     '',
-    'Si la intención es "anotar", completá las tareas:',
-    '- "que": la acción, breve, empezando con un verbo. Ejemplo: "Enviar el presupuesto a Itaú".',
+    'Si la intención es "anotar", completá la lista "tareas", una entrada por cada cosa:',
+    '- "tipo": "evento" si es algo que ocurre en un momento: una reunión, una llamada,',
+    '  una visita, o cualquier cosa con hora. "tarea" si es algo que alguien tiene que',
+    '  hacer para una fecha, aunque no tenga hora.',
+    '- "que": breve. Para una tarea, empezando con un verbo ("Enviar el presupuesto").',
+    '  Para un evento, lo que es ("Reunión con Rony", "Llamada al banco").',
     '- "responsable": quién la tiene que hacer. Si coincide con alguien de la lista,',
     '  usá el nombre exactamente como figura en la lista. Si ' + ctx.quien + ' habla de sí',
     '  mismo ("tengo que", "recordame", "me toca"), el responsable es ' + ctx.quien + '.',
     '  Si no se sabe, dejalo vacío.',
     '- "plazo": fecha AAAA-MM-DD. Resolvé "el viernes", "mañana", "fin de mes" contra',
     '  la fecha de hoy. Si no se dijo ninguna fecha, dejalo vacío: no inventes plazos.',
+    '- "hora": HH:MM en 24 horas si se dijo ("5 de la tarde" es "17:00"). Vacía si no.',
+    '- "duracionMinutos": solo si se dijo cuánto dura.',
+    '- "participantes": en un evento, quiénes más van a estar, con el nombre como',
+    '  figura en la lista si coincide. No incluyas a quien habla.',
     '',
     '"respuesta": una sola frase corta confirmando lo que entendiste, de vos, sin',
     'emojis ni exclamaciones. Si el audio no se entiende, decilo.',
@@ -556,7 +641,7 @@ function textoBienvenida(nombre) {
 
 /** Una tarea en una línea: "#12 Enviar el presupuesto — Diana · vie 26/09". */
 function lineaTarea(t, hoy, mostrarResponsable) {
-  const plazo = formatearPlazo(t.plazo, hoy);
+  const plazo = formatearCuando(t.plazo, t.hora, hoy);
   let linea = '*#' + t.numero + '* ' + t.que;
   if (mostrarResponsable) linea += ' — ' + (t.responsable || 'sin responsable');
   if (plazo) linea += ' · ' + (plazo.indexOf('vencida') === 0 ? '*' + plazo + '*' : plazo);
@@ -600,6 +685,7 @@ function confirmarAnotadas(respuesta, anotadas, hoy) {
   const lineas = [respuesta, ''];
   anotadas.forEach(function (a) {
     lineas.push('• ' + lineaTarea(a.tarea, hoy, true));
+    if (a.nota) lineas.push('   ' + a.nota);
     if (a.problema) lineas.push('   ' + a.problema);
   });
   return lineas.join('\n').trim();
@@ -641,6 +727,41 @@ function seccionesMinuta(m) {
   ];
 }
 
+/**
+ * La minuta en la forma estable que puede leer otro sistema. Si cambia, se
+ * sube "version" y se documenta en asistente/DATOS.md.
+ */
+function datosDeMinuta(r, m, fecha, duracion, enlaces, anotadas) {
+  return {
+    version: 1,
+    tipo: 'minuta',
+    id: r.id,
+    fecha: fecha,
+    recibida: r.recibida,
+    titulo: m.titulo || '',
+    grabo: { nombre: r.grabo, email: r.email },
+    nota: r.nota || '',
+    duracionMinutos: duracion,
+    resumen: m.resumen || '',
+    participantes: (m.participantes || []).map(function (p) {
+      return { nombre: p.nombre, rol: p.rol || '' };
+    }),
+    decisiones: m.decisiones || [],
+    compromisos: anotadas.map(function (a) {
+      return {
+        tarea: a.tarea.numero,
+        que: a.tarea.que,
+        responsable: a.tarea.responsable || '',
+        email: a.tarea.emailResponsable || '',
+        plazo: a.tarea.plazo || '',
+      };
+    }),
+    preguntasAbiertas: m.preguntasAbiertas || [],
+    riesgos: m.riesgos || [],
+    enlaces: enlaces,
+  };
+}
+
 // ===== Base.js =====
 
 /**
@@ -653,8 +774,10 @@ function seccionesMinuta(m) {
  */
 
 const HOJAS = {
+  // Las columnas nuevas van siempre al final: las filas viejas siguen valiendo.
   tareas: ['N', 'Creada', 'Qué', 'Responsable', 'Email responsable', 'Plazo', 'Estado',
-    'Pidió', 'Email pidió', 'Origen', 'Enlace', 'Cerrada'],
+    'Pidió', 'Email pidió', 'Origen', 'Enlace', 'Cerrada', 'Tipo', 'Hora',
+    'ID en Calendar', 'ID en Google Tasks', 'Reunión'],
   reuniones: ['ID', 'Recibida', 'Título', 'Grabó', 'Email', 'Nota', 'Carpeta', 'Audio',
     'Tipo', 'Estado', 'Transcripción', 'Minuta', 'Error', 'Intentos', 'Archivo en Gemini',
     'Subido a Gemini', 'Duración (min)', 'Transcripto hasta (min)', 'Participantes',
@@ -726,7 +849,23 @@ function filaATarea_(f, i) {
     emailPidio: String(f[8]).toLowerCase(),
     origen: String(f[9]),
     enlace: String(f[10]),
+    cerrada: String(f[11]),
+    tipo: String(f[12]) || 'tarea',
+    hora: String(f[13]),
+    idCalendar: String(f[14]),
+    idTasks: String(f[15]),
+    reunion: String(f[16]),
   };
+}
+
+const COLUMNA_TAREA = { estado: 7, cerrada: 12, idCalendar: 15, idTasks: 16 };
+
+function actualizarTarea_(t, cambios) {
+  const h = hoja_('tareas');
+  Object.keys(cambios).forEach(function (k) {
+    h.getRange(t.fila, COLUMNA_TAREA[k]).setValue(cambios[k]);
+    t[k] = cambios[k];
+  });
 }
 
 function tareas_() {
@@ -737,27 +876,44 @@ function agregarTarea_(t) {
   return conCandado_(function () {
     const numeros = tareas_().map(function (x) { return x.numero || 0; });
     const numero = (numeros.length ? Math.max.apply(null, numeros) : 0) + 1;
-    hoja_('tareas').appendRow([
+    const h = hoja_('tareas');
+    h.appendRow([
       numero, ahora_(), t.que, t.responsable || '', (t.emailResponsable || '').toLowerCase(),
-      // El apóstrofo le dice a Sheets que es texto, no una fecha.
+      // El apóstrofo le dice a Sheets que es texto, no una fecha ni una hora.
       t.plazo ? "'" + t.plazo : '', 'abierta', t.pidio, (t.emailPidio || '').toLowerCase(),
-      t.origen, t.enlace || '', '',
+      t.origen, t.enlace || '', '', t.tipo || 'tarea', t.hora ? "'" + t.hora : '', '', '',
+      t.reunion || '',
     ]);
     t.numero = numero;
+    t.fila = h.getLastRow();
+    t.estado = 'abierta';
+    t.idCalendar = '';
+    t.idTasks = '';
     return t;
   });
 }
 
+/** Lo que la persona tiene por delante: sin lo cerrado ni los eventos que ya pasaron. */
 function pendientesDe_(email) {
   email = String(email).toLowerCase();
-  return tareas_().filter(function (t) { return t.estado === 'abierta' && t.emailResponsable === email; });
+  const hoy = hoy_();
+  return tareas_().filter(function (t) {
+    return t.estado === 'abierta' && t.emailResponsable === email && !yaOcurrio(t, hoy);
+  });
 }
 
 function pedidosDe_(email) {
   email = String(email).toLowerCase();
+  const hoy = hoy_();
   return tareas_().filter(function (t) {
-    return t.estado === 'abierta' && t.emailPidio === email && t.emailResponsable !== email;
+    return t.estado === 'abierta' && t.emailPidio === email && t.emailResponsable !== email && !yaOcurrio(t, hoy);
   });
+}
+
+/** Todas las tareas de una persona, abiertas o no: las necesita la sincronización. */
+function tareasDeResponsable_(email) {
+  email = String(email).toLowerCase();
+  return tareas_().filter(function (t) { return t.emailResponsable === email; });
 }
 
 /**
@@ -773,9 +929,7 @@ function cerrarTarea_(numero, email) {
     if (t.emailResponsable !== email && t.emailPidio !== email) {
       return { ok: false, motivo: 'La #' + numero + ' no es tuya ni la pediste vos, así que no la puedo cerrar.' };
     }
-    const h = hoja_('tareas');
-    h.getRange(t.fila, 7).setValue('cerrada');
-    h.getRange(t.fila, 12).setValue(ahora_());
+    actualizarTarea_(t, { estado: 'cerrada', cerrada: ahora_() });
     return { ok: true, tarea: t };
   });
 }
@@ -1032,6 +1186,108 @@ function encabezado_(respuesta, nombre) {
   return clave ? String(todos[clave]) : '';
 }
 
+// ===== Google.js =====
+
+/**
+ * Calendar y Google Tasks.
+ *
+ * Todo corre con la cuenta de quien está usando el Asistente en ese momento:
+ * su calendario y su lista de tareas. Google no deja escribir en la lista de
+ * otra persona sin un permiso del administrador; por eso una tarea para Diana
+ * aparece en su Google Tasks la próxima vez que ella le escribe al Asistente,
+ * que es cuando el Asistente corre con la cuenta de ella.
+ */
+
+function usuarioActual_() {
+  return String(Session.getEffectiveUser().getEmail() || '').toLowerCase();
+}
+
+/**
+ * El evento va al calendario de quien lo pidió, con invitación a los demás:
+ * la invitación es la forma en que Google pone un evento en el calendario de
+ * otra persona sin permisos especiales.
+ */
+function crearEvento_(t, invitados, duracionMinutos) {
+  const opciones = {
+    description: 'Anotado por el Asistente (#' + t.numero + '), a pedido de ' + t.pidio + '.' +
+      (t.enlace ? '\n' + t.enlace : ''),
+  };
+  if (invitados.length) {
+    opciones.guests = invitados.join(',');
+    opciones.sendInvites = true;
+  }
+  const calendario = CalendarApp.getDefaultCalendar();
+  let evento;
+  if (esHora(t.hora)) {
+    const inicio = Utilities.parseDate(t.plazo + ' ' + normalizarHora(t.hora), ZONA, 'yyyy-MM-dd HH:mm');
+    const fin = new Date(inicio.getTime() + (Number(duracionMinutos) || 60) * 60000);
+    evento = calendario.createEvent(t.que, inicio, fin, opciones);
+  } else {
+    evento = calendario.createAllDayEvent(t.que, Utilities.parseDate(t.plazo, ZONA, 'yyyy-MM-dd'), opciones);
+  }
+  return evento.getId();
+}
+
+function crearGoogleTask_(t) {
+  const tarea = {
+    title: t.que,
+    notes: 'Tarea #' + t.numero + ' del Asistente, pedida por ' + t.pidio + '.' +
+      (t.enlace ? '\n' + t.enlace : '') +
+      '\nMarcarla como hecha acá la cierra también en el Asistente.',
+  };
+  // Google Tasks guarda solo el día: la hora de la fecha se ignora.
+  if (esFechaIso(t.plazo)) tarea.due = t.plazo + 'T00:00:00.000Z';
+  return Tasks.Tasks.insert(tarea, '@default').id;
+}
+
+/** Estado de cada tarea de la lista de la persona, por id. */
+function estadoEnTasks_() {
+  const estado = {};
+  let pagina;
+  do {
+    const r = Tasks.Tasks.list('@default', {
+      showCompleted: true,
+      showHidden: true,
+      maxResults: 100,
+      pageToken: pagina,
+    });
+    (r.items || []).forEach(function (x) { estado[x.id] = x.status; });
+    pagina = r.nextPageToken;
+  } while (pagina);
+  return estado;
+}
+
+function completarEnTasks_(id) {
+  Tasks.Tasks.patch({ status: 'completed' }, '@default', id);
+}
+
+/**
+ * Deja la base y el Google Tasks de la persona diciendo lo mismo, en los dos
+ * sentidos: crea en su lista lo que tiene pendiente, cierra en la base lo que
+ * marcó como hecho allá, y marca como hecho allá lo que se cerró por Chat.
+ *
+ * Nunca rompe: si Google Tasks falla, el Asistente sigue funcionando y se
+ * vuelve a intentar en la próxima conversación.
+ */
+function sincronizarGoogleTasks_(email) {
+  try {
+    const suyas = tareasDeResponsable_(email).filter(function (t) { return t.tipo !== 'evento'; });
+    const hayQueCrear = suyas.some(function (t) { return t.estado === 'abierta' && !t.idTasks; });
+    const hayQueMirar = suyas.some(function (t) { return t.idTasks; });
+    if (!hayQueCrear && !hayQueMirar) return;
+
+    const plan = planDeSincronizacion(suyas, hayQueMirar ? estadoEnTasks_() : {});
+    plan.crear.forEach(function (t) { actualizarTarea_(t, { idTasks: crearGoogleTask_(t) }); });
+    plan.completarEnTasks.forEach(function (t) { completarEnTasks_(t.idTasks); });
+    plan.cerrarEnBase.forEach(function (t) {
+      actualizarTarea_(t, { estado: 'cerrada', cerrada: ahora_() });
+      if (t.emailPidio && t.emailPidio !== email) avisarCierre_(t, { nombre: t.responsable });
+    });
+  } catch (err) {
+    console.error('Sincronización con Google Tasks de ' + email + ': ' + (err && err.stack ? err.stack : err));
+  }
+}
+
 // ===== Avisos.js =====
 
 /**
@@ -1124,9 +1380,12 @@ function avisoMatutino() {
   const dia = diaDeLaSemana(hoy);
   if (dia === 0 || dia === 6) return;
 
+  // Corre con la cuenta de quien instaló: es su oportunidad de sincronizar.
+  sincronizarGoogleTasks_(usuarioActual_());
+
   const porPersona = {};
   tareas_().forEach(function (t) {
-    if (t.estado !== 'abierta' || !t.emailResponsable) return;
+    if (t.estado !== 'abierta' || !t.emailResponsable || yaOcurrio(t, hoy)) return;
     (porPersona[t.emailResponsable] = porPersona[t.emailResponsable] || []).push(t);
   });
 
@@ -1209,6 +1468,9 @@ function responder_(evento) {
   const quien = quienEscribe_(evento);
   if (!quien.email) return 'No pude saber quién sos. Escribime desde tu cuenta de la empresa.';
   registrarPersona_(quien.nombre, quien.email);
+  // Es el momento en que el Asistente corre con la cuenta de esta persona: se
+  // aprovecha para poner al día su Google Tasks con la base.
+  sincronizarGoogleTasks_(quien.email);
 
   const texto = textoDelMensaje(evento.mensaje);
   const adjunto = adjuntoDeAudio(evento.mensaje);
@@ -1355,58 +1617,124 @@ function interpretarNota_(quien, entrada) {
 }
 
 /**
- * Anota cada tarea y le avisa a su responsable.
+ * Anota cada cosa en la base y la lleva a donde la persona la va a mirar: los
+ * eventos al calendario, las tareas a Google Tasks o al correo.
  *
- * Si el nombre no se puede atar a una persona concreta, la tarea se anota
- * igual pero se dice por qué no se avisó: una tarea que el responsable no sabe
- * que tiene es una tarea que no existe.
+ * Si el nombre no se puede atar a una persona concreta, se anota igual pero se
+ * dice por qué no se avisó: una tarea que el responsable no sabe que tiene es
+ * una tarea que no existe. Y si Calendar o Tasks fallan, lo anotado no se
+ * pierde: queda en la base y se dice qué no se pudo hacer.
  *
  * @param {boolean} sinResponsableEsQuienPide en una nota, "recordame" es para
  *   quien habla. En una reunión, un compromiso sin dueño queda sin dueño.
  */
-function anotarTareas_(tareas, origen, gente, sinResponsableEsQuienPide) {
-  return tareas.map(function (t) {
-    let responsable = String(t.responsable || '').trim();
-    let email = '';
-    let problema = '';
-
-    if (!responsable && sinResponsableEsQuienPide) {
-      responsable = origen.pidio;
-      email = origen.emailPidio;
-    } else if (responsable) {
-      const b = buscarPersona(gente, responsable);
-      if (b.persona) {
-        responsable = b.persona.nombre;
-        email = b.persona.email;
-      } else if (b.candidatos.length > 1) {
-        problema = 'Hay más de una persona que coincide con "' + responsable + '" (' +
-          b.candidatos.map(function (p) { return p.nombre; }).join(', ') +
-          '). No le avisé a nadie: cerrala y pedila de nuevo con el nombre completo.';
-      } else {
-        problema = 'Todavía no conozco a "' + responsable + '", así que no le pude avisar. ' +
-          'Pedile que me escriba una vez y queda registrado.';
-      }
-    }
+function anotarTareas_(items, origen, gente, sinResponsableEsQuienPide) {
+  const yo = usuarioActual_();
+  return items.map(function (item) {
+    const quien = resolverResponsable_(item, origen, gente, sinResponsableEsQuienPide);
+    const tipo = clasificarItem(item);
 
     const tarea = agregarTarea_({
-      que: t.que,
-      responsable: responsable,
-      emailResponsable: email,
-      plazo: esFechaIso(t.plazo) ? t.plazo : '',
+      que: item.que,
+      responsable: quien.nombre,
+      emailResponsable: quien.email,
+      plazo: esFechaIso(item.plazo) ? item.plazo : '',
+      hora: normalizarHora(item.hora),
+      tipo: tipo,
       pidio: origen.pidio,
       emailPidio: origen.emailPidio,
       origen: origen.origen,
       enlace: origen.enlace,
+      reunion: origen.reunion || '',
     });
-    if (email && email !== origen.emailPidio) avisarTarea_(tarea, origen);
-    return { tarea: tarea, problema: problema };
+
+    const resultado = { tarea: tarea, problema: quien.problema, nota: '' };
+    try {
+      if (tipo === 'evento') {
+        agendar_(tarea, item, quien, origen, gente, resultado);
+      } else if (quien.email && quien.email === yo) {
+        actualizarTarea_(tarea, { idTasks: crearGoogleTask_(tarea) });
+        resultado.nota = 'En tu Google Tasks.';
+      } else if (quien.email) {
+        avisarTarea_(tarea, origen);
+        resultado.nota = 'Le avisé por correo.';
+      }
+    } catch (err) {
+      console.error(err && err.stack ? err.stack : err);
+      const donde = tipo === 'evento' ? 'agendarlo en el calendario' : 'pasarlo a Google Tasks';
+      resultado.problema = [resultado.problema, 'Quedó anotado, pero no pude ' + donde + ': ' +
+        (err && err.message ? err.message : err)].filter(String).join(' ');
+    }
+    return resultado;
   });
+}
+
+function resolverResponsable_(item, origen, gente, sinResponsableEsQuienPide) {
+  const nombre = String(item.responsable || '').trim();
+  if (!nombre) {
+    return sinResponsableEsQuienPide
+      ? { nombre: origen.pidio, email: origen.emailPidio, problema: '' }
+      : { nombre: '', email: '', problema: '' };
+  }
+  const b = buscarPersona(gente, nombre);
+  if (b.persona) return { nombre: b.persona.nombre, email: b.persona.email, problema: '' };
+  if (b.candidatos.length > 1) {
+    return {
+      nombre: nombre,
+      email: '',
+      problema: 'Hay más de una persona que coincide con "' + nombre + '" (' +
+        b.candidatos.map(function (p) { return p.nombre; }).join(', ') +
+        '). No le avisé a nadie: cerrala y pedila de nuevo con el nombre completo.',
+    };
+  }
+  return {
+    nombre: nombre,
+    email: '',
+    problema: 'Todavía no conozco a "' + nombre + '", así que no le pude avisar. ' +
+      'Pedile que me escriba una vez y queda registrado.',
+  };
+}
+
+/**
+ * El evento va al calendario de quien lo pidió. Se invita a los participantes
+ * que el Asistente conoce, y al responsable si es otra persona.
+ */
+function agendar_(tarea, item, quien, origen, gente, resultado) {
+  const invitados = [];
+  const nombres = [];
+  const desconocidos = [];
+  (item.participantes || []).concat(quien.email && quien.email !== origen.emailPidio ? [quien.nombre] : [])
+    .forEach(function (n) {
+      const b = buscarPersona(gente, n);
+      if (b.persona && b.persona.email !== origen.emailPidio && invitados.indexOf(b.persona.email) === -1) {
+        invitados.push(b.persona.email);
+        nombres.push(nombreDePila_(b.persona.nombre));
+      } else if (!b.persona) {
+        desconocidos.push(n);
+      }
+    });
+
+  actualizarTarea_(tarea, { idCalendar: crearEvento_(tarea, invitados, item.duracionMinutos) });
+  resultado.nota = 'Lo agendé en tu calendario' + (nombres.length ? ' e invité a ' + nombres.join(', ') : '') + '.';
+  if (desconocidos.length) {
+    resultado.nota += ' No conozco a ' + desconocidos.join(', ') + ', así que no pude invitarl' +
+      (desconocidos.length > 1 ? 'os' : 'o') + '.';
+  }
 }
 
 function cerrar_(quien, numero) {
   const r = cerrarTarea_(numero, quien.email);
   if (!r.ok) return r.motivo;
   const t = r.tarea;
+  // Si la tarea es de otra persona, su Google Tasks se pone al día la próxima
+  // vez que esa persona le escriba al Asistente.
+  if (t.idTasks && t.emailResponsable === quien.email) {
+    try {
+      completarEnTasks_(t.idTasks);
+    } catch (err) {
+      console.error(err && err.stack ? err.stack : err);
+    }
+  }
   // Cierra el círculo: quien pidió algo se entera cuando está hecho.
   if (t.emailPidio && t.emailPidio !== quien.email) avisarCierre_(t, quien);
   return 'Cerrada la *#' + numero + '* ' + t.que + '.' +
@@ -1570,12 +1898,16 @@ function escribirMinuta_(r) {
   carpeta.setName(fecha + ' — ' + (m.titulo || 'Reunión'));
   const doc = crearDocMinuta_(m, r, fecha, carpeta);
 
-  const anotadas = anotarTareas_(m.compromisos || [], {
+  const anotadas = anotarTareas_((m.compromisos || []).map(function (c) {
+    return { tipo: 'tarea', que: c.que, responsable: c.responsable, plazo: c.plazo };
+  }), {
     pidio: r.grabo,
     emailPidio: r.email,
     origen: 'reunión: ' + m.titulo,
     enlace: doc.getUrl(),
+    reunion: r.id,
   }, gente, false);
+  guardarDatosDeMinuta_(r, m, fecha, duracion, doc, carpeta, anotadas);
 
   actualizarReunion_(r, {
     titulo: m.titulo,
@@ -1587,6 +1919,19 @@ function escribirMinuta_(r) {
     error: '',
   });
   avisarMinuta_(r, m, doc.getUrl(), anotadas);
+}
+
+/**
+ * La minuta como datos, al lado del documento. El documento es para leer; esto
+ * es para que otro sistema (el cerebro de la empresa) la pueda usar sin tener
+ * que interpretar texto. La forma está descripta en asistente/DATOS.md.
+ */
+function guardarDatosDeMinuta_(r, m, fecha, duracion, doc, carpeta, anotadas) {
+  carpeta.createFile('minuta.json', JSON.stringify(datosDeMinuta(r, m, fecha, duracion, {
+    minuta: doc.getUrl(),
+    carpeta: carpeta.getUrl(),
+    audio: DriveApp.getFileById(r.audioId).getUrl(),
+  }, anotadas), null, 2), 'application/json');
 }
 
 /** La minuta como documento de Google: editable y comentable, no un texto muerto. */
@@ -1722,6 +2067,7 @@ function instalar() {
   });
   // Los plazos son texto: si Sheets los toma como fecha, les agrega hora y zona.
   base.getSheetByName('Tareas').getRange('F:F').setNumberFormat('@');
+  base.getSheetByName('Tareas').getRange('N:N').setNumberFormat('@');
   const sobrante = base.getSheets().filter(function (h) {
     return Object.keys(NOMBRE_HOJA).map(function (k) { return NOMBRE_HOJA[k]; }).indexOf(h.getName()) === -1;
   });
@@ -1752,8 +2098,23 @@ function instalar() {
       'Los primeros mensajes pueden fallar unos minutos.';
   }
 
+  const faltan = [];
+  try {
+    CalendarApp.getDefaultCalendar().getName();
+  } catch (err) {
+    faltan.push('Google Calendar API (' + (err && err.message ? err.message : err) + ')');
+  }
+  try {
+    Tasks.Tasklists.list({ maxResults: 1 });
+  } catch (err) {
+    faltan.push('Google Tasks API (' + (err && err.message ? err.message : err) + ')');
+  }
+
   console.log([
     'Listo. Todo instalado y ' + estadoGemini,
+    faltan.length
+      ? '\nATENCIÓN: no pude usar ' + faltan.join(' ni ') + '. Habilitala en el proyecto de Google Cloud y volvé a correr instalar. Mientras tanto, las tareas se anotan igual.'
+      : '',
     '',
     'Carpeta: ' + carpeta.getUrl(),
     'Base:    ' + base.getUrl(),

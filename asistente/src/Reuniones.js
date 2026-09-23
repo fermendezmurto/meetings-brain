@@ -153,12 +153,16 @@ function escribirMinuta_(r) {
   carpeta.setName(fecha + ' — ' + (m.titulo || 'Reunión'));
   const doc = crearDocMinuta_(m, r, fecha, carpeta);
 
-  const anotadas = anotarTareas_(m.compromisos || [], {
+  const anotadas = anotarTareas_((m.compromisos || []).map(function (c) {
+    return { tipo: 'tarea', que: c.que, responsable: c.responsable, plazo: c.plazo };
+  }), {
     pidio: r.grabo,
     emailPidio: r.email,
     origen: 'reunión: ' + m.titulo,
     enlace: doc.getUrl(),
+    reunion: r.id,
   }, gente, false);
+  guardarDatosDeMinuta_(r, m, fecha, duracion, doc, carpeta, anotadas);
 
   actualizarReunion_(r, {
     titulo: m.titulo,
@@ -170,6 +174,19 @@ function escribirMinuta_(r) {
     error: '',
   });
   avisarMinuta_(r, m, doc.getUrl(), anotadas);
+}
+
+/**
+ * La minuta como datos, al lado del documento. El documento es para leer; esto
+ * es para que otro sistema (el cerebro de la empresa) la pueda usar sin tener
+ * que interpretar texto. La forma está descripta en asistente/DATOS.md.
+ */
+function guardarDatosDeMinuta_(r, m, fecha, duracion, doc, carpeta, anotadas) {
+  carpeta.createFile('minuta.json', JSON.stringify(datosDeMinuta(r, m, fecha, duracion, {
+    minuta: doc.getUrl(),
+    carpeta: carpeta.getUrl(),
+    audio: DriveApp.getFileById(r.audioId).getUrl(),
+  }, anotadas), null, 2), 'application/json');
 }
 
 /** La minuta como documento de Google: editable y comentable, no un texto muerto. */
