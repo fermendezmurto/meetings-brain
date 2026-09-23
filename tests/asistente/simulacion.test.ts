@@ -209,11 +209,52 @@ describe('conversación', () => {
     expect(escribir(g, FER, 'anotame algo')).toBe('No tenés nada pendiente.')
   })
 
-  it('si Gemini sigue saturado, lo dice con palabras claras', () => {
+  it('si Gemini sigue saturado, lo dice una sola vez y sin culparse', () => {
     const g = instalado({ fallaGemini: (t: string) => (t === 'nota' ? 503 : undefined) })
+    // Lo que se vio en la primera prueba real repetía el consejo y decía
+    // "algo falló de mi lado".
+    expect(escribir(g, FER, 'anotame algo')).toBe(
+      'Gemini está saturado en este momento. Suele pasar unos minutos: probá de nuevo en un rato.',
+    )
+  })
+
+  it('si el modelo principal está saturado, contesta con el de respaldo', () => {
+    const g = instalado({
+      nota: { intencion: 'pendientes', respuesta: '', tareas: [] },
+      fallaGemini: (t: string, modelo: string) => (t === 'nota' && modelo === 'gemini-3.6-flash' ? 503 : undefined),
+    })
+    expect(escribir(g, FER, 'anotame algo')).toBe('No tenés nada pendiente.')
+    expect(g.pedidosGemini.at(-1)!.url).toContain('models/gemini-3.5-flash-lite:')
+  })
+
+  it('si el respaldo no existe, igual avisa la saturación y no un error técnico', () => {
+    const g = instalado({
+      modelosRetirados: ['gemini-3.5-flash-lite'],
+      fallaGemini: (t: string, modelo: string) => (t === 'nota' && modelo === 'gemini-3.6-flash' ? 503 : undefined),
+    })
     const r = escribir(g, FER, 'anotame algo')
-    expect(r).toContain('Gemini está saturado en este momento')
-    expect(r).not.toContain('503')
+    expect(r).toContain('Gemini está saturado')
+    expect(r).not.toContain('404')
+  })
+
+  it('si el respaldo no acepta el parámetro de razonamiento, se le pide sin él', () => {
+    const g = instalado({
+      nota: { intencion: 'pendientes', respuesta: '', tareas: [] },
+      rechazaRazonamientoEn: ['gemini-3.5-flash-lite'],
+      fallaGemini: (t: string, modelo: string) => (t === 'nota' && modelo === 'gemini-3.6-flash' ? 503 : undefined),
+    })
+    expect(escribir(g, FER, 'anotame algo')).toBe('No tenés nada pendiente.')
+  })
+
+  it('con el respaldo apagado, reintenta el mismo modelo', () => {
+    let fallas = 1
+    const g = instalado({
+      nota: { intencion: 'pendientes', respuesta: '', tareas: [] },
+      fallaGemini: (t: string) => (t === 'nota' && fallas-- > 0 ? 503 : undefined),
+    })
+    g.props.set('GEMINI_MODEL_RESPALDO', 'ninguno')
+    expect(escribir(g, FER, 'anotame algo')).toBe('No tenés nada pendiente.')
+    expect(g.pedidosGemini.filter((p) => p.tipo === 'nota').every((p) => p.url.includes('gemini-3.6-flash:'))).toBe(true)
   })
 
   it('un error de Gemini llega como mensaje claro, no como silencio', () => {

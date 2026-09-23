@@ -50,3 +50,13 @@ function esErrorPasajero(codigo) {
 function convieneReintentar(codigo, milisegundos) {
   return esErrorPasajero(codigo) && milisegundos < 10000;
 }
+
+/**
+ * El modelo a probar cuando el principal está saturado, o vacío si no hay.
+ * No tiene sentido "respaldar" un modelo con él mismo.
+ */
+function modeloDeRespaldo(principal, configurado) {
+  const r = String(configurado || '').trim();
+  if (!r || r.toLowerCase() === 'ninguno' || r === principal) return '';
+  return r;
+}

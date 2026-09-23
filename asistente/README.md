@@ -203,7 +203,7 @@ tareas:** así la conoce.
 | "Asistente no responde", y en **Ejecuciones** no aparece ningún `onMessage` | Chat no está llegando al código. Revisá que `appsscript.json` sea el de [`dist/appsscript.json`](dist/appsscript.json) (tiene que tener una sección `addOns`), y el ID de implementación y los nombres de las funciones en la configuración de Chat. |
 | "Permission denied while enabling APIs" | Habilitá a mano las cuatro APIs del paso 2c y volvé a correr instalar. |
 | "Google retiró el modelo…" | El mismo mensaje dice qué valor poner en la propiedad `GEMINI_MODEL`. |
-| "Gemini está saturado en este momento" | Es de Google y suele durar minutos. El Asistente reintenta solo con las reuniones. |
+| "Gemini está saturado en este momento" | Es de Google y suele durar minutos. Antes de decirlo, el Asistente ya probó con un modelo de respaldo (`gemini-3.5-flash-lite`, se cambia con la propiedad `GEMINI_MODEL_RESPALDO`). Con las reuniones sigue reintentando solo durante una hora. |
 
 Para ver qué hizo el Asistente por dentro: en script.google.com, menú de la
 izquierda → **Ejecuciones**.

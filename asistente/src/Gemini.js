@@ -28,27 +28,26 @@ function geminiConUso_(partes, esquema, opciones) {
   opciones = opciones || {};
   const modelo = prop_('GEMINI_MODEL', MODELO_POR_DEFECTO);
 
-  const generacion = {
-    responseMimeType: 'application/json',
-    responseSchema: esquema,
-    temperature: 0.2,
-  };
-  if (opciones.maxTokens) generacion.maxOutputTokens = opciones.maxTokens;
-  const razonamiento = configRazonamiento(modelo, opciones.razonamiento);
-  if (razonamiento) generacion.thinkingConfig = razonamiento;
-
   let inicio = Date.now();
-  let r = pedirGemini_(modelo, partes, generacion);
-  // Si el modelo no acepta cómo se le acotó el razonamiento, se pide de nuevo
-  // sin acotarlo: más lento, pero contesta.
-  if (r.getResponseCode() === 400 && generacion.thinkingConfig && /thinking/i.test(r.getContentText())) {
-    delete generacion.thinkingConfig;
-    inicio = Date.now();
-    r = pedirGemini_(modelo, partes, generacion);
-  }
+  let r = pedirConAjuste_(modelo, partes, esquema, opciones);
   if (convieneReintentar(r.getResponseCode(), Date.now() - inicio)) {
-    Utilities.sleep(3000);
-    r = pedirGemini_(modelo, partes, generacion);
+    const respaldo = modeloDeRespaldo(modelo, prop_('GEMINI_MODEL_RESPALDO', RESPALDO_POR_DEFECTO));
+    if (respaldo) {
+      // Otro modelo tiene otra capacidad: probarlo al toque tiene más chance
+      // que esperar a que se desature el principal.
+      const r2 = pedirConAjuste_(respaldo, partes, esquema, opciones);
+      if (r2.getResponseCode() === 200) {
+        r = r2;
+      } else {
+        // Si el respaldo tampoco anda, o no existe, la persona igual recibe el
+        // aviso de saturación del principal, nunca un error técnico del respaldo.
+        console.error('El respaldo ' + respaldo + ' tampoco respondió (' + r2.getResponseCode() + '): ' +
+          r2.getContentText().slice(0, 200));
+      }
+    } else {
+      Utilities.sleep(3000);
+      r = pedirConAjuste_(modelo, partes, esquema, opciones);
+    }
   }
 
   const codigo = r.getResponseCode();
@@ -83,6 +82,31 @@ function errorPasajero_(mensaje) {
   const e = new Error(mensaje);
   e.pasajero = true;
   return e;
+}
+
+/**
+ * Un pedido, con un solo ajuste: si el modelo no acepta cómo se le acotó el
+ * razonamiento, se pide de nuevo sin acotarlo. Más lento, pero contesta.
+ */
+function pedirConAjuste_(modelo, partes, esquema, opciones) {
+  const r = pedirGemini_(modelo, partes, generacionPara_(modelo, esquema, opciones));
+  if (r.getResponseCode() === 400 && configRazonamiento(modelo, opciones.razonamiento) &&
+      /thinking/i.test(r.getContentText())) {
+    return pedirGemini_(modelo, partes, generacionPara_(modelo, esquema, { maxTokens: opciones.maxTokens }));
+  }
+  return r;
+}
+
+function generacionPara_(modelo, esquema, opciones) {
+  const generacion = {
+    responseMimeType: 'application/json',
+    responseSchema: esquema,
+    temperature: 0.2,
+  };
+  if (opciones.maxTokens) generacion.maxOutputTokens = opciones.maxTokens;
+  const razonamiento = configRazonamiento(modelo, opciones.razonamiento);
+  if (razonamiento) generacion.thinkingConfig = razonamiento;
+  return generacion;
 }
 
 function pedirGemini_(modelo, partes, generacion) {

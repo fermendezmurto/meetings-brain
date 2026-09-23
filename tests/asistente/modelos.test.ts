@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { cargar, TODOS } from './cargar'
 
-const { configRazonamiento, mensajeModeloRetirado, esErrorPasajero, convieneReintentar } = cargar(...TODOS)
+const { configRazonamiento, modeloDeRespaldo, mensajeModeloRetirado, esErrorPasajero, convieneReintentar } = cargar(...TODOS)
 
 describe('configRazonamiento', () => {
   it('a la familia 2.5 Flash le acota el razonamiento con un presupuesto', () => {
@@ -56,5 +56,15 @@ describe('errores pasajeros', () => {
     // persona sin respuesta.
     expect(convieneReintentar(503, 30000)).toBe(false)
     expect(convieneReintentar(400, 800)).toBe(false)
+  })
+})
+
+describe('modeloDeRespaldo', () => {
+  it('usa el configurado, salvo que sea el mismo modelo o se haya apagado', () => {
+    expect(modeloDeRespaldo('gemini-3.6-flash', 'gemini-3.5-flash-lite')).toBe('gemini-3.5-flash-lite')
+    expect(modeloDeRespaldo('gemini-3.6-flash', 'gemini-3.6-flash')).toBe('')
+    expect(modeloDeRespaldo('gemini-3.6-flash', 'ninguno')).toBe('')
+    expect(modeloDeRespaldo('gemini-3.6-flash', 'Ninguno')).toBe('')
+    expect(modeloDeRespaldo('gemini-3.6-flash', '')).toBe('')
   })
 })

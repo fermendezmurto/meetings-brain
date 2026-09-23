@@ -21,11 +21,13 @@ export interface Guion {
   /** Cuánto audio "cobra" Gemini en la minuta, en minutos. */
   minutosDeAudio?: number
   /** Si devuelve un número, Gemini responde con ese código de error. */
-  fallaGemini?: (tipo: string) => number | undefined
+  fallaGemini?: (tipo: string, modelo: string) => number | undefined
   /** Modelos que Google ya no ofrece a cuentas nuevas. */
   modelosRetirados?: string[]
   /** El modelo rechaza la forma en que se le acota el razonamiento. */
   rechazaRazonamiento?: boolean
+  /** Solo estos modelos rechazan el parámetro de razonamiento. */
+  rechazaRazonamientoEn?: string[]
   /** Calendar o Tasks sin habilitar en el proyecto. */
   fallaCalendar?: boolean
   fallaTasks?: boolean
@@ -357,10 +359,11 @@ export function crearGoogle(opciones: { ahora: string; guion?: Guion }) {
         if (guion.modelosRetirados?.includes(modelo)) {
           return respuesta(404, { error: { code: 404, status: 'NOT_FOUND', message: `This model models/${modelo} is no longer available to new users. Please update your code to use models/gemini-3.6-flash for the latest features and improvements.` } })
         }
-        if (guion.rechazaRazonamiento && cuerpo.generationConfig.thinkingConfig) {
+        const rechaza = guion.rechazaRazonamiento || guion.rechazaRazonamientoEn?.includes(modelo)
+        if (rechaza && cuerpo.generationConfig.thinkingConfig) {
           return respuesta(400, { error: { code: 400, status: 'INVALID_ARGUMENT', message: 'Thinking level is not supported for this model.' } })
         }
-        const falla = guion.fallaGemini?.(tipo)
+        const falla = guion.fallaGemini?.(tipo, modelo)
         if (falla) return respuesta(falla, { error: { message: 'falla simulada' } })
         const salida =
           tipo === 'nota' ? resolver(guion.nota, cuerpo)

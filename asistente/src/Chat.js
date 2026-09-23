@@ -22,8 +22,10 @@ function onMessage(e) {
     return contestar(evento, responder_(evento));
   } catch (err) {
     console.error(err && err.stack ? err.stack : err);
+    // Lo pasajero ya viene explicado y no es culpa de nadie de acá.
+    if (err && err.pasajero) return contestar(evento, err.message);
     return contestar(evento, 'Algo falló de mi lado: ' + (err && err.message ? err.message : err) +
-      '\nProbá de nuevo en un rato. Si sigue, avisale a quien me instaló.');
+      '\nSi sigue pasando, avisale a quien me instaló.');
   }
 }
 
