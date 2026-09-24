@@ -1,0 +1,42 @@
+# Comprueba que la app compila para iPhone, sin firmarla.
+#
+# Corre en una Mac de GitHub, que gasta diez veces más minutos que Linux: por
+# eso no corre con cada cambio, solo cuando cambia este archivo o a mano.
+# Para instalarla en un iPhone de verdad hace falta firmarla (ver movil/IPHONE.md).
+name: App iPhone (compilación)
+
+on:
+  push:
+    branches: [claude/meeting-recording-drive-app-6ugk55, main]
+    paths: ['.github/workflows/app-ios.yml']
+  workflow_dispatch:
+
+jobs:
+  compilar:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: movil/package-lock.json
+
+      - name: Dependencias
+        working-directory: movil
+        run: npm ci
+
+      - name: Proyecto iOS
+        working-directory: movil
+        run: npx expo prebuild --platform ios
+
+      - name: Compilar para el simulador
+        working-directory: movil/ios
+        run: |
+          xcodebuild -workspace Asistente.xcworkspace -scheme Asistente \
+            -configuration Release -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build | tail -40
+          test "${PIPESTATUS[0]}" -eq 0
