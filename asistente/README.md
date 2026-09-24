@@ -62,8 +62,13 @@ viene con Workspace.
 
 Eso creó en tu Drive una carpeta **Asistente**, con la planilla que hace de base.
 
-11. En Drive, **compartí la carpeta Asistente** con las personas del piloto,
-    como **Editor**. Sin esto, el Asistente no puede anotar lo que ellas le piden.
+11. En Drive, **arrastrá la carpeta Asistente a la unidad compartida del
+    proyecto**. Los enlaces y el código siguen funcionando: se guían por el
+    identificador, no por el lugar.
+12. **Sumá a las personas del piloto a la unidad compartida** como
+    **Administrador de contenido** (en la unidad: *Administrar miembros*). Sin
+    esto, el Asistente no puede anotar lo que ellas le piden ni guardar sus
+    reuniones.
 
 ---
 
@@ -216,9 +221,10 @@ Chat, así que la app no pide usuario ni contraseña.
   **Asistente.apk**. Abrilo desde el celular. Android pregunta si permitís
   instalar apps de esa fuente: sí. Las versiones nuevas se instalan encima,
   sin perder nada.
-- **iPhone:** Apple no deja instalar apps fuera de su tienda sin una cuenta de
+- **iPhone:** Apple no deja repartir apps fuera de su tienda sin una cuenta de
   desarrollador (USD 99 por año). Con esa cuenta, la app se reparte por
-  TestFlight a quien se invite. El código es el mismo.
+  TestFlight a quien se invite. Para probarla en un solo iPhone sin pagar, se
+  instala desde una Mac con Xcode (guía *App en iPhone*): vence cada 7 días.
 
 ### 4c. Vincular y grabar
 
@@ -240,7 +246,7 @@ llamada interrumpe la grabación, al volver tocás **Continuar**.
 | Lo que ves | Qué pasa y qué hacer |
 |---|---|
 | "Falta GEMINI_API_KEY" | La propiedad del paso 7 de la Parte 1 no está, o tiene otro nombre. |
-| "No puedo abrir la base" o error de permisos | No compartiste la carpeta Asistente con esa persona como Editor. |
+| "No puedo abrir la base" o error de permisos | Esa persona no es miembro de la unidad compartida como Administrador de contenido. |
 | "Todavía no conozco a…" | Esa persona nunca le escribió al Asistente. Que le escriba *hola* una vez. |
 | "Hay más de una persona que coincide" | Usá el nombre completo. |
 | "Llegó al límite de pedidos del nivel gratuito" | Se agotó la cuota diaria de Gemini. Se renueva sola; con facturación activada no pasa. |
@@ -333,8 +339,9 @@ versión → Implementar**. La dirección no cambia.
 3. **Activar la facturación** del proyecto `reuniones`: sale del nivel gratuito
    y sus límites, y Google deja de usar el contenido. El costo es de centavos
    por hora de reunión.
-4. Mover la carpeta Asistente a una **unidad compartida**, para que nada dependa
-   de la cuenta de una persona.
+4. La carpeta Asistente vive en una **unidad compartida**, para que nada
+   dependa de la cuenta de una persona. Las personas nuevas se suman como
+   miembros de la unidad.
 
 ---
 
