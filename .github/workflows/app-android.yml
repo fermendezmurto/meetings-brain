@@ -8,7 +8,7 @@ name: App Android
 on:
   push:
     branches: [claude/meeting-recording-drive-app-6ugk55, main]
-    paths: ['movil/**', '.github/workflows/app-android.yml']
+    paths: ['movil/**', '!movil/**/*.md', '.github/workflows/app-android.yml']
   workflow_dispatch:
 
 permissions:
